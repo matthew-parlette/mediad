@@ -1,0 +1,3 @@
+[submodule "thetvdb"]
+	path = thetvdb
+	url = https://github.com/matthew-parlette/thetvdb.git
