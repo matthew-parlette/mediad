@@ -3,6 +3,7 @@ from thetvdb import thetvdb
 import argparse
 import ConfigParser
 import sys
+import daemon
 
 #Global Arguments
 version = '0.1'
@@ -16,22 +17,28 @@ def print_error_and_exit(section,message):
   print_error(section,message)
   sys.exit(1)
 
+def run():
+  """Function to be run by the daemonized process.
+  
+  """
+  pass
+
 def main():
   
   #Parse command line arguments
   parser = argparse.ArgumentParser("Classify, Rename, and Move media")
-  #http://docs.python.org/library/argparse.html#adding-arguments
   parser.add_argument('--version', action='version', version=version)
   parser.add_argument('-v','--verbose', help="enable verbose output", action='store_true')
   parser.add_argument('--debug', help="enable debug output",action='store_true')
   parser.add_argument('--conf', help="define a configuration file to load", default='mediad.conf')
-  parser.add_argument('-d','--daemon', help="start the media daemon", action='store_true')
+  #parser.add_argument('-d','--daemon', help="start the media daemon", action='store_true')
   args = parser.parse_args()
   
   #Load config file
   config = ConfigParser.RawConfigParser()
   config.read(args.conf)
-  #General Section
+  
+  ##General Section
   if config.has_section('GENERAL'):
     if config.has_option('GENERAL','watch_dir'):
       watch_dir=config.get('GENERAL','watch_dir')
@@ -40,7 +47,7 @@ def main():
   else:
     print_error_and_exit("Config '%s'" % args.conf,"GENERAL section must be defined")
   
-  #TV Section
+  ##TV Section
   if config.has_section('TV'):
     if config.has_option('TV','tv_dir'):
       watch_dir=config.get('TV','tv_dir')
