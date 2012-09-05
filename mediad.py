@@ -21,7 +21,35 @@ def run():
   """Function to be run by the daemonized process.
   
   """
-  pass
+  print "run!"
+
+def verify_config(config):
+  """Verify that the essential parts of the configuration are provided in the ConfigParser object.
+  Return False if an error was found.
+  """
+  ##General Section
+  if config.has_section('GENERAL'):
+    if config.has_option('GENERAL','watch_dir'):
+      watch_dir=config.get('GENERAL','watch_dir')
+    else:
+      print_error("verify_config()","WATCH_DIR must be defined in GENERAL section")
+      return False
+  else:
+    print_error("verify_config()","GENERAL section must be defined")
+    return False
+  
+  ##TV Section
+  if config.has_section('TV'):
+    if config.has_option('TV','tv_dir'):
+      watch_dir=config.get('TV','tv_dir')
+    else:
+      print_error("verify_config()","TV_DIR must be defined in TV section")
+      return False
+  else:
+    print_error("verify_config()","TV section must be defined")
+    return False
+  
+  return True
 
 def main():
   
@@ -31,32 +59,23 @@ def main():
   parser.add_argument('-v','--verbose', help="enable verbose output", action='store_true')
   parser.add_argument('--debug', help="enable debug output",action='store_true')
   parser.add_argument('--conf', help="define a configuration file to load", default='mediad.conf')
-  #parser.add_argument('-d','--daemon', help="start the media daemon", action='store_true')
+  parser.add_argument('-d','--daemon', help="start the media daemon", action='store_true')
   args = parser.parse_args()
   
   #Load config file
   config = ConfigParser.RawConfigParser()
   config.read(args.conf)
   
-  ##General Section
-  if config.has_section('GENERAL'):
-    if config.has_option('GENERAL','watch_dir'):
-      watch_dir=config.get('GENERAL','watch_dir')
-    else:
-      print_error_and_exit("Config '%s'" % args.conf,"WATCH_DIR must be defined in GENERAL section")
-  else:
-    print_error_and_exit("Config '%s'" % args.conf,"GENERAL section must be defined")
-  
-  ##TV Section
-  if config.has_section('TV'):
-    if config.has_option('TV','tv_dir'):
-      watch_dir=config.get('TV','tv_dir')
-    else:
-      print_error_and_exit("Config '%s'" % args.conf,"TV_DIR must be defined in TV section")
-  else:
-    print_error_and_exit("Config '%s'" % args.conf,"TV section must be defined")
+  if verify_config(config) is False:
+    print_error_and_exit("Config '%s'" % args.conf,"Error in config file")
   
   #Do Something
+  if args.daemon:
+    print "starting daemon"
+    with daemon.DaemonContext():
+      run()
+    print "daemon started"
+  print "done processing"
 
 if __name__ == "__main__":
   main()
