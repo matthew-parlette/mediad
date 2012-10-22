@@ -64,19 +64,13 @@ def main():
   args = parser.parse_args()
   
   #Load config file
-  config = ConfigParser.RawConfigParser()
+  config = ConfigParser.ConfigParser()
   config.read(args.conf)
   
   if verify_config(config) is False:
     print_error_and_exit("Config '%s'" % args.conf,"Error in config file")
   
-  #Do Something
-  if args.daemon:
-    print "starting daemon"
-    with daemon.DaemonContext():
-      run()
-    print "daemon started"
-  print "done processing"
+  print config.get("GENERAL","video_ext").split(',')
 
 if __name__ == "__main__":
   main()
