@@ -21,7 +21,8 @@ def run():
   """Function to be run by the daemonized process.
   
   """
-  print "run!"
+  while True:
+    print "running"
 
 def verify_config(config):
   """Verify that the essential parts of the configuration are provided in the ConfigParser object.
