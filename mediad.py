@@ -153,7 +153,7 @@ def test_classifier(svc):
       print_log("no result")
     print_log("...done")
 
-def plot_training_data(clf,X,Y):
+def plot_training_data(clf,X,y):
   """Plot the training data to the screen to be used for troubleshooting.
   This was adapted from http://scikit-learn.org/stable/auto_examples/svm/plot_svm_kernels.html
   
