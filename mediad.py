@@ -3,7 +3,6 @@ from thetvdb import thetvdb
 import argparse
 import ConfigParser
 import sys
-import daemon
 import os
 import kaa.metadata
 import pylab as pl
@@ -22,6 +21,100 @@ class Video:
   """
   tv=1
   movie=0
+
+class Classifier:
+  def __init__(self):
+    self.svc = svm.SVC(kernel="linear")
+    self.__X = None
+    self.__y = None
+  
+  def get_video_features(self,filename):
+    """Gather the features of the given file and return a row to be used in the SVM.
+    
+    Parameter is the absolute filename
+    """
+    
+    print_log_verbose("Gathering video features for "+str(filename))
+    if os.path.exists(filename):
+      info = kaa.metadata.parse(filename)
+    else:
+      print_error("get_video_features()","file cannot be found")
+      return None
+    print_log_verbose("Media type for: "+str(info.media))
+    if info is not None and info.media == "MEDIA_AV":
+      #gather features
+      x1 = int(info.length)
+      if args.verbose:
+        print "x1 (video length): "+str(x1)
+      return [x1]
+    return None
+
+  def gather_training_data(self,directory,classification):
+    """Add to the current training set of data with the media files existing on the system. For each
+    file, gather features to add it to the X array (a num_files X num_features array) and the
+    classification in the y vector (a num_files length vector) matching 1 for tv and 0 for movies.
+    
+    There is no return value. This function builds on the current contents of X and y
+    
+    """
+    
+    #gather data in lists so we can bulk-add to the matrix
+    #appending one row at a time to a matrix is costly
+    X_rows = []
+    y_rows = []
+    
+    for path,subdirs,files in os.walk(directory):
+      for filename in files:
+        absolute_path = os.path.join(path, filename)
+        print_log_verbose("processing file "+filename)
+        info = kaa.metadata.parse(absolute_path)
+        #only process video files
+        #documentation here: http://doc.freevo.org/api/kaa/metadata/usage.html#attributes-keys
+        if info is not None and info.media == "MEDIA_AV":
+          #gather features
+          row = self.get_video_features(absolute_path)
+          #add to training set
+          if row is not None:
+            print_log_verbose("adding row: "+str(row))
+            X_rows.append(row)
+            y_rows.append(classification)
+    
+    #now add the gathered data to the array
+    if len(X_rows) > 0:
+      print_log_verbose("X_rows: "+str(X_rows))
+      print_log_verbose("y_rows: "+str(y_rows))
+      if self.__X is None:
+        self.__X = array(X_rows)
+        self.__y = array(y_rows)
+      else:
+        self.__X = vstack((self.__X,X_rows))
+        self.__y = hstack((self.__y,y_rows))
+    
+
+  def train(self):
+    self.svc.fit(self.__X,self.__y)
+  
+  def classify(self,filename):
+    """Classify the given file using the SVM.
+    Return a classification from the Video class.
+    
+    """
+    
+    features = get_video_features(filename)
+    if features is not None:
+      print_log_verbose("classifying "+str(filename))
+      print_log_verbose("features: "+str(features))
+      return int(self.svc.predict([features])[0])
+    else:
+      return -1
+
+  def plot_training_data(self):
+    """Plot the training data to the screen to be used for troubleshooting.
+    This was adapted from http://scikit-learn.org/stable/auto_examples/svm/plot_svm_kernels.html
+    
+    """
+    print_log("X:\n"+str(self.__X))
+    print_log("y:\n"+str(self.__y))
 
 def print_error(section,message):
   print "ERROR: %s: %s" % (section,message)
@@ -72,79 +165,17 @@ def verify_config(config):
   
   return True
 
-def get_video_features(filename):
-  """Gather the features of the given file and return a row to be used in the SVM.
-  
-  Parameter is the absolute filename
-  """
-  
-  print_log_verbose("Gathering video features for "+str(filename))
-  if os.path.exists(filename):
-    info = kaa.metadata.parse(filename)
-  else:
-    print_error("get_video_features()","file cannot be found")
-    return None
-  print_log_verbose("Media type for: "+str(info.media))
-  if info is not None and info.media == "MEDIA_AV":
-    #gather features
-    x1 = int(info.length)
-    if args.verbose:
-      print "x1 (video length): "+str(x1)
-    return [x1]
-  return None
-
-def gather_training_set(directory,classification,X = None,y = None):
-  """Create a training set of data with the media files existing on the system. For each
-  file, gather features to add it to the X array (a num_files X num_features array) and the
-  classification in the y vector (a num_files length vector) matching 1 for tv and 0 for movies.
-  
-  X and y can be passed in if more than one directory is being scanned
-  
-  This returns a tuple of X and y.
+def test_classifier(classifier):
+  """Test the classifier with some sample training data.
+  You can modify the tests by changing the tests variable, each tuple would be a test.
   
   """
-  
-  for path,subdirs,files in os.walk(directory):
-    for filename in files:
-      absolute_path = os.path.join(path, filename)
-      if args.verbose:
-        print_log_verbose("processing file "+filename)
-      info = kaa.metadata.parse(absolute_path)
-      #only process video files
-      #documentation here: http://doc.freevo.org/api/kaa/metadata/usage.html#attributes-keys
-      if info is not None and info.media == "MEDIA_AV":
-        #gather features
-        row = get_video_features(absolute_path)
-        #add to training set
-        if row is not None:
-          if X is None:
-            X = array(row)
-            y = array([classification])
-          else:
-            X = vstack((X,row))
-            y = hstack((y,[classification]))
-  
-  return [X,y]
-
-def classify(svc,filename):
-  """Classify the given file using the SVM.
-  Return a classification from the Video class.
-  
-  """
-  
-  features = get_video_features(filename)
-  if features is not None:
-    print_log_verbose("classifying "+str(filename))
-    print_log_verbose("features: "+str(features))
-    return int(svc.predict([features])[0])
-  else:
-    return -1
-
-def test_classifier(svc):
+  #each tuple is a test
+  #[length in seconds]
   tests = ([1200],[2500],[5000],[8000])
   for test in tests:
     print_log("testing "+str(test[0])+" seconds ("+str(test[0]/60)+" minutes)...")
-    result = int(svc.predict(test)[0])
+    result = int(classifier.svc.predict(test)[0])
     if result == Video.tv:
       print_log("tv")
     elif result == Video.movie:
@@ -152,14 +183,6 @@ def test_classifier(svc):
     else:
       print_log("no result")
     print_log("...done")
-
-def plot_training_data(clf,X,y):
-  """Plot the training data to the screen to be used for troubleshooting.
-  This was adapted from http://scikit-learn.org/stable/auto_examples/svm/plot_svm_kernels.html
-  
-  """
-  print_log("X:\n"+str(X))
-  print_log("y:\n"+str(y))
 
 def main():
   
@@ -188,25 +211,25 @@ def main():
   
   print_log("gathering training data...")
   #1 for tv, 0 for movie
-  (X,y) = gather_training_set(config.get("TV","tv_dir"),Video.tv)
-  (X,y) = gather_training_set(config.get("MOVIES","movie_dir"),Video.movie,X,y)
+  classifier = Classifier()
+  classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
+  classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
   print_log("...done")
   print_log("training SVM...")
-  svc = svm.SVC(kernel="linear")
-  svc.fit(X,y)
+  classifier.train()
   print_log("...done")
   if args.plot:
     print_log("plotting training data...")
-    plot_training_data(svc,X,y)
+    classifier.plot_training_data()
     print_log("...done")
   if args.test:
-    test_classifier(svc)
+    test_classifier(classifier)
   else:
     if args.filename:
       print_log("classifying file...")
       if os.path.exists(args.filename[0]):
         print_log_verbose("file found: "+str(args.filename[0]))
-        result = classify(svc,args.filename[0])
+        result = classifier.classify(svc,args.filename[0])
         if result == Video.tv:
           print_log("tv")
         elif result == Video.movie:
