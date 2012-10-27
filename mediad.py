@@ -4,14 +4,17 @@ import argparse
 import ConfigParser
 import sys
 import os
+import time
 import kaa.metadata
 import pylab as pl
 from numpy import array,vstack,hstack,mgrid,c_
 from sklearn import svm
+from daemon import Daemon
 
 #Global Arguments
 version = '0.1'
 args = None
+logfile = None
 
 #tv = thetvdb.TVShow('94571')
 
@@ -22,11 +25,16 @@ class Video:
   tv=1
   movie=0
 
-class Classifier:
-  def __init__(self):
+class Classifier(Daemon):
+  def __init__(self,pidfile):
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
+    #status in {'initializing','training','ready'}
+    self.status = 'initializing'
+    #call the parent's __init__ to initialize the daemon variables
+    #super(Daemon,self).__init__()
+    Daemon.__init__(self,pidfile)
   
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
@@ -92,7 +100,9 @@ class Classifier:
     
 
   def train(self):
+    self.status = 'training'
     self.svc.fit(self.__X,self.__y)
+    self.status = 'ready'
   
   def classify(self,filename):
     """Classify the given file using the SVM.
@@ -115,27 +125,34 @@ class Classifier:
     """
     print_log("X:\n"+str(self.__X))
     print_log("y:\n"+str(self.__y))
+  
+  def run(self):
+    """Override for inherited run method of the Daemon class.
+    
+    """
+    print_log("daemon is running")
+    time.sleep(20)
 
-def print_error(section,message):
-  print "ERROR: %s: %s" % (section,message)
+def timestamp():
+  return time.strftime("%Y-%m-%d %T| ")
 
-def print_error_and_exit(section,message):
-  print_error(section,message)
+def print_error(message):
+  print_log("ERROR: %s" % (message))
+
+def print_error_and_exit(message):
+  print_error(message)
   sys.exit(1)
 
 def print_log(message):
-  print message
+  if logfile is None:
+    print str(message)
+  else:
+    message = timestamp()+message
+    logfile.write(message+'\n')
 
 def print_log_verbose(message):
   if args.verbose:
     print_log(message)
-
-def run():
-  """Function to be run by the daemonized process.
-  
-  """
-  while True:
-    print "running"
 
 def verify_config(config):
   """Verify that the essential parts of the configuration are provided in the ConfigParser object.
@@ -192,10 +209,11 @@ def main():
   parser.add_argument('-v','--verbose', help="enable verbose output", action='store_true')
   parser.add_argument('--debug', help="enable debug output",action='store_true')
   parser.add_argument('--conf', help="define a configuration file to load", default='mediad.conf')
-  parser.add_argument('-d','--daemon', help="start the media daemon", action='store_true')
+  parser.add_argument('-d','--daemon', help="start the media daemon", nargs=1)
   parser.add_argument('-p','--plot', help="plot the training data", action='store_true')
   parser.add_argument('-t','--test', help="test the classifier SVM", action='store_true')
   parser.add_argument('-f','--filename', help="classify a specific file", nargs=1)
+  parser.add_argument('--logfile', help="specify a log file for the output", nargs=1)
   global args
   args = parser.parse_args()
   
@@ -203,15 +221,31 @@ def main():
   config = ConfigParser.ConfigParser()
   config.read(args.conf)
   
+  global logfile
+  if args.logfile and args.logfile[0]:
+    logfile = open(os.path.abspath(args.logfile[0]),'a')
+  elif config.has_option("GENERAL","logfile") and len(config.get("GENERAL","logfile")):
+    if logfile is None:
+      logfile_path = config.get("GENERAL","logfile")
+      logfile = open(os.path.abspath(logfile_path),'a')
+  
   if verify_config(config) is False:
     print_error_and_exit("Config '%s'" % args.conf,"Error in config file")
   
   if args.verbose:
     print "verbose logging on"
   
+  if args.daemon:
+    if not args.daemon[0] or args.daemon[0] not in ('start','stop','restart'):
+      print_error_and_exit("main","expected daemon argument in {start|stop|restart}")
+    if args.daemon[0] == 'start':
+      pass
+    elif args.daemon[0] == 'stop':
+      pass
+    elif args.daemon[0] == 'restart':
+      pass
   print_log("gathering training data...")
-  #1 for tv, 0 for movie
-  classifier = Classifier()
+  classifier = Classifier(config.get("GENERAL","pidfile"))
   classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
   classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
   print_log("...done")
