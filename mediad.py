@@ -26,7 +26,7 @@ class Video:
   movie=0
 
 class Classifier(Daemon):
-  def __init__(self,pidfile):
+  def __init__(self,pidfile,logfile_path = None):
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
@@ -34,9 +34,8 @@ class Classifier(Daemon):
     #status in {'initializing','training','ready'}
     self.status = 'initializing'
     #call the parent's __init__ to initialize the daemon variables
-    #super(Daemon,self).__init__()
+    #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
-    self.log.print_log("classifier initialized with logfile %s" % str(self.log))
   
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
@@ -132,10 +131,8 @@ class Classifier(Daemon):
     """Override for inherited run method of the Daemon class.
     
     """
-    print "in run"
-    self.log.print_log("in run")
     while True:
-      self.log.print_log("daemon is running")
+      self.log.print_log(str(os.getpid())+" daemon is running")
       time.sleep(20)
 
 class Logger():
@@ -143,7 +140,7 @@ class Logger():
     if logfile_path is None:
       self.logfile = None
     else:
-      self.logfile = open(os.path.abspath(logfile_path),'a')
+      self.logfile = open(os.path.abspath(logfile_path),'a+')
     self.verbose = verbose
   
   def __repr__(self):
@@ -151,7 +148,11 @@ class Logger():
       return "stdout"
     else:
       return self.logfile.name
-    
+  
+  def close(self):
+    if self.logfile is not None:
+      logfile.close()
+  
   def timestamp(self):
     return time.strftime("%Y-%m-%d %T| ")
 
@@ -168,6 +169,7 @@ class Logger():
     else:
       message = self.timestamp()+message
       self.logfile.write(message+'\n')
+      self.logfile.flush()
 
   def print_log_verbose(self,message):
     if self.verbose:
@@ -228,7 +230,7 @@ def main():
   parser.add_argument('-v','--verbose', help="enable verbose output", action='store_true')
   parser.add_argument('--debug', help="enable debug output",action='store_true')
   parser.add_argument('--conf', help="define a configuration file to load", default='mediad.conf')
-  parser.add_argument('-d','--daemon', help="start the media daemon", nargs=1)
+  parser.add_argument('-d','--daemon', help="manage the classifier daemon", nargs=1)
   parser.add_argument('-p','--plot', help="plot the training data", action='store_true')
   parser.add_argument('-t','--test', help="test the classifier SVM", action='store_true')
   parser.add_argument('-f','--filename', help="classify a specific file", nargs=1)
@@ -259,7 +261,7 @@ def main():
     if not args.daemon[0] or args.daemon[0] not in ('start','stop','restart'):
       log.print_error_and_exit("expected daemon argument in {start|stop|restart}")
     #at this point, we have a valid daemon command
-    classifier = Classifier(config.get("GENERAL","pidfile"))
+    classifier = Classifier(config.get("GENERAL","pidfile"),logfile_path)
     if args.daemon[0] == 'start':
       classifier.start()
     elif args.daemon[0] == 'stop':
@@ -271,7 +273,10 @@ def main():
   classifier = Classifier(config.get("GENERAL","pidfile"))
 =======
       classifier.restart()
-  exit(1)
+    exit(0)
+  
+  #running past this point is bad news until I figure out daemon communication
+  exit(0)
   log.print_log("gathering training data...")
 >>>>>>> 32a6755... while troubleshooting the daemon not logging, I added a Logger class to handle all logging (or output to stdout). I hope this will resolve the daemon not logging.
   classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
