@@ -15,6 +15,8 @@ from daemon import Daemon
 version = '0.1'
 args = None
 logfile_path = None
+config = None
+log = None
 
 #tv = thetvdb.TVShow('94571')
 
@@ -30,7 +32,10 @@ class Classifier(Daemon):
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
-    self.log = Logger(logfile_path)
+    if args:
+      self.log = Logger(logfile_path,args.verbose)
+    else:
+      self.log = Logger(logfile_path)
     #status in {'initializing','training','ready'}
     self.status = 'initializing'
     #call the parent's __init__ to initialize the daemon variables
@@ -53,8 +58,7 @@ class Classifier(Daemon):
     if info is not None and info.media == "MEDIA_AV":
       #gather features
       x1 = int(info.length)
-      if args.verbose:
-        print "x1 (video length): "+str(x1)
+      self.log.print_log_verbose("x1 (video length): "+str(x1))
       return [x1]
     return None
 
@@ -101,8 +105,10 @@ class Classifier(Daemon):
     
 
   def train(self):
+    self.log.print_log_verbose("training with data\nX:\n%s\ny:\n%s" % (str(self.__X),str(self.__y)))
     self.status = 'training'
     self.svc.fit(self.__X,self.__y)
+    self.log.print_log_verbose("classifier is trained and ready")
     self.status = 'ready'
   
   def classify(self,filename):
@@ -121,7 +127,7 @@ class Classifier(Daemon):
 
   def plot_training_data(self):
     """Plot the training data to the screen to be used for troubleshooting.
-    This was adapted from http://scikit-learn.org/stable/auto_examples/svm/plot_svm_kernels.html
+    Until it is figured out, this just prints the training data.
     
     """
     self.log.print_log("X:\n"+str(self.__X))
@@ -132,8 +138,19 @@ class Classifier(Daemon):
     
     """
     while True:
-      self.log.print_log(str(os.getpid())+" daemon is running")
+      if self.status == 'initializing':
+        self.train()
+      if self.status == 'ready':
+        self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
       time.sleep(20)
+  
+  def stop(self):
+    """Override for inherited stop method of Daemon class.
+    Right now this just logs that the classifier is stopping.
+    
+    """
+    self.log.print_log("classifier daemon is shutting down (pid %s)" % str(os.getpid()))
+    Daemon.stop(self)
 
 class Logger():
   def __init__(self,logfile_path=None,verbose=False):
@@ -157,7 +174,13 @@ class Logger():
     return time.strftime("%Y-%m-%d %T| ")
 
   def print_error(self,message):
+    """Print the error message with a prefix designating that it is an error.
+    This should print to the logfile (if defined) as well as the stdout.
+    
+    """
     self.print_log("ERROR: %s" % (message))
+    if self.logfile is not None:
+      print "ERROR: %s" % (message)
 
   def print_error_and_exit(self,message):
     self.print_error(message)
@@ -203,6 +226,17 @@ def verify_config(config):
   
   return True
 
+def load_media_data(classifier):
+  """Load the media data to the passed classifier with the current files from the tv and movies folders.
+  Returns the results in a boolean.
+  
+  """
+  log.print_log("gathering training data...")
+  classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
+  classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
+  log.print_log("...done")
+  return True
+
 def test_classifier(classifier):
   """Test the classifier with some sample training data.
   You can modify the tests by changing the tests variable, each tuple would be a test.
@@ -230,15 +264,17 @@ def main():
   parser.add_argument('-v','--verbose', help="enable verbose output", action='store_true')
   parser.add_argument('--debug', help="enable debug output",action='store_true')
   parser.add_argument('--conf', help="define a configuration file to load", default='mediad.conf')
-  parser.add_argument('-d','--daemon', help="manage the classifier daemon", nargs=1)
+  parser.add_argument('-d','--daemon', help="manage the media daemon", nargs=1)
   parser.add_argument('-p','--plot', help="plot the training data", action='store_true')
   parser.add_argument('-t','--test', help="test the classifier SVM", action='store_true')
   parser.add_argument('-f','--filename', help="classify a specific file", nargs=1)
   parser.add_argument('--logfile', help="specify a log file for the output", nargs=1)
+  parser.add_argument('-c','--classifier', help="manage the classifier daemon", nargs=1)
   global args
   args = parser.parse_args()
   
   #Load config file
+  global config
   config = ConfigParser.ConfigParser()
   config.read(args.conf)
   
@@ -249,23 +285,30 @@ def main():
     if logfile_path is None:
       logfile_path = os.path.abspath(config.get("GENERAL","logfile"))
   
+  global log
   log = Logger(logfile_path)
   
   if verify_config(config) is False:
     log.print_error_and_exit("Error in config file %s" % args.conf)
   
   if args.verbose:
-    print "verbose logging on"
+    log.print_log_verbose("verbose logging on")
   
-  if args.daemon:
-    if not args.daemon[0] or args.daemon[0] not in ('start','stop','restart'):
-      log.print_error_and_exit("expected daemon argument in {start|stop|restart}")
+  if args.classifier:
+    if not args.classifier[0] or args.classifier[0] not in ('start','stop','restart'):
+      log.print_error_and_exit("expected classifier argument in {start|stop|restart}")
     #at this point, we have a valid daemon command
-    classifier = Classifier(config.get("GENERAL","pidfile"),logfile_path)
-    if args.daemon[0] == 'start':
-      classifier.start()
-    elif args.daemon[0] == 'stop':
+    classifier = Classifier(config.get("GENERAL","classifier_pidfile"),logfile_path)
+    if args.classifier[0] in ('start','restart'):
+      if args.classifier[0] == 'restart':
+        classifier.stop()
+      if load_media_data(classifier):
+        classifier.start()
+      else:
+        log.print_error_and_exit("error loading media data")
+    elif args.classifier[0] == 'stop':
       classifier.stop()
+<<<<<<< HEAD
     elif args.daemon[0] == 'restart':
 <<<<<<< HEAD
       pass
@@ -273,15 +316,21 @@ def main():
   classifier = Classifier(config.get("GENERAL","pidfile"))
 =======
       classifier.restart()
+=======
+>>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
     exit(0)
   
   #running past this point is bad news until I figure out daemon communication
   exit(0)
+<<<<<<< HEAD
   log.print_log("gathering training data...")
 >>>>>>> 32a6755... while troubleshooting the daemon not logging, I added a Logger class to handle all logging (or output to stdout). I hope this will resolve the daemon not logging.
   classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
   classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
   log.print_log("...done")
+=======
+  
+>>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
   log.print_log("training SVM...")
   classifier.train()
   log.print_log("...done")
