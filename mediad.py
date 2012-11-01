@@ -157,7 +157,6 @@ class Classifier(Daemon):
           channel.start_consuming()
         else:
           self.log.print_error_and_exit("could not connect to rabbitmq server, is it installed and running?")
-      time.sleep(5)
   
   def stop(self):
     """Override for inherited stop method of Daemon class.
@@ -209,6 +208,12 @@ class Logger():
       self.logfile.write(message+'\n')
       self.logfile.flush()
 
+  def print_log_and_stdout(self,message):
+    self.print_log(message)
+    #if logfile is defined, then we already printed it to stdout
+    if self.logfile:
+      print message
+    
   def print_log_verbose(self,message):
     if self.verbose:
       self.print_log(message)
@@ -324,8 +329,8 @@ def main():
     log.print_log_verbose("verbose logging on")
   
   if args.classifier:
-    if not args.classifier[0] or args.classifier[0] not in ('start','stop','restart'):
-      log.print_error_and_exit("expected classifier argument in {start|stop|restart}")
+    if not args.classifier[0] or args.classifier[0] not in ('start','stop','restart','status'):
+      log.print_error_and_exit("expected classifier argument in {start|stop|restart|status}")
     #at this point, we have a valid daemon command
     classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path)
     if args.classifier[0] in ('start','restart'):
@@ -333,10 +338,12 @@ def main():
         classifier.stop()
       if load_media_data(classifier):
         classifier.start()
+        print classifier.get_pid()
       else:
         log.print_error_and_exit("error loading media data")
     elif args.classifier[0] == 'stop':
       classifier.stop()
+<<<<<<< HEAD
 <<<<<<< HEAD
     elif args.daemon[0] == 'restart':
 <<<<<<< HEAD
@@ -348,6 +355,13 @@ def main():
 =======
 >>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
     exit(0)
+=======
+    elif args.classifier[0] == 'status':
+      if classifier.get_pid():
+        log.print_log_and_stdout("classifier daemon is running, pid %s" % classifier.get_pid())
+      else:
+        log.print_log_and_stdout("classifier daemon is not running")
+>>>>>>> fa2a98e... implemented classifier status command
   
 <<<<<<< HEAD
   #running past this point is bad news until I figure out daemon communication
