@@ -10,6 +10,7 @@ import pylab as pl
 from numpy import array,vstack,hstack,mgrid,c_
 from sklearn import svm
 from daemon import Daemon
+import pika
 
 #Global Arguments
 version = '0.1'
@@ -28,10 +29,12 @@ class Video:
   movie=0
 
 class Classifier(Daemon):
-  def __init__(self,pidfile,logfile_path = None):
+  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost'):
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
+    self.amqp_host = amqp_host
+    self.amqp_queue = 'classifyd'
     if args:
       self.log = Logger(logfile_path,args.verbose)
     else:
@@ -140,9 +143,21 @@ class Classifier(Daemon):
     while True:
       if self.status == 'initializing':
         self.train()
-      if self.status == 'ready':
+      elif self.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
-      time.sleep(20)
+        connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.amqp_host))
+        if connection:
+          channel = connection.channel()
+          channel.queue_declare(queue=self.amqp_queue)
+          def callback(ch, method, properties, body):
+            self.log.print_log_verbose("received message: %s" % body)
+          self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
+          channel.basic_consume(callback,queue=self.amqp_queue,no_ack=True)
+          #the next command blocks, so it will keep listening and this method will no longer loop
+          channel.start_consuming()
+        else:
+          self.log.print_error_and_exit("could not connect to rabbitmq server, is it installed and running?")
+      time.sleep(5)
   
   def stop(self):
     """Override for inherited stop method of Daemon class.
@@ -256,6 +271,20 @@ def test_classifier(classifier):
       log.print_log("no result")
     log.print_log("...done")
 
+def classify(filename):
+  """After verifying the file exists, send the filename to the classifyd message queue and wait for a response.
+  
+  """
+  connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+  channel = connection.channel()
+  
+  channel.queue_declare(queue='classifyd')
+  
+  channel.basic_publish(exchange='',routing_key='classifyd',body=filename)
+  log.print_log("sent %s" % str(filename))
+  connection.close()
+  return -1
+
 def main():
   
   #Parse command line arguments
@@ -298,7 +327,7 @@ def main():
     if not args.classifier[0] or args.classifier[0] not in ('start','stop','restart'):
       log.print_error_and_exit("expected classifier argument in {start|stop|restart}")
     #at this point, we have a valid daemon command
-    classifier = Classifier(config.get("GENERAL","classifier_pidfile"),logfile_path)
+    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path)
     if args.classifier[0] in ('start','restart'):
       if args.classifier[0] == 'restart':
         classifier.stop()
@@ -320,6 +349,7 @@ def main():
 >>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
     exit(0)
   
+<<<<<<< HEAD
   #running past this point is bad news until I figure out daemon communication
   exit(0)
 <<<<<<< HEAD
@@ -334,9 +364,11 @@ def main():
   log.print_log("training SVM...")
   classifier.train()
   log.print_log("...done")
+=======
+>>>>>>> 7357e18... setup rabbitmq as the message handler, configured the classifier to listen for messages (which are only filenames for now), and the -f option to send the filename to the queue
   if args.plot:
     log.print_log("plotting training data...")
-    classifier.plot_training_data()
+    
     log.print_log("...done")
   if args.test:
     test_classifier(classifier)
@@ -345,7 +377,7 @@ def main():
       log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
         log.print_log_verbose("file found: "+str(args.filename[0]))
-        result = classifier.classify(svc,args.filename[0])
+        result = classify(args.filename[0])
         if result == Video.tv:
           log.print_log("tv")
         elif result == Video.movie:

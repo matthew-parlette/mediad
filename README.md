@@ -7,7 +7,7 @@ Prerequisites
 =============
 
 Python packages:
-apt-get install python-sklearn python-kaa-metadata python-daemon
+apt-get install python-sklearn python-kaa-metadata python-daemon rabbitmq-server python-pika
 
 Optional (for all features):
 apt-get install python-matplotlib
