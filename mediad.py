@@ -439,11 +439,11 @@ def main():
         log.print_log_verbose("file found: "+str(args.filename[0]))
         result = classify(args.filename[0])
         if result == Video.tv:
-          log.print_log("tv")
+          log.print_log_and_stdout("tv")
         elif result == Video.movie:
-          log.print_log("movie")
+          log.print_log_and_stdout("movie")
         else:
-          log.print_log("error")
+          log.print_log_and_stdout("error")
       else:
         log.print_error("file not found")
       log.print_log("...done")
