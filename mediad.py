@@ -11,6 +11,7 @@ from numpy import array,vstack,hstack,mgrid,c_
 from sklearn import svm
 from daemon import Daemon
 import pika
+import uuid
 
 #Global Arguments
 version = '0.1'
@@ -18,6 +19,7 @@ args = None
 logfile_path = None
 config = None
 log = None
+response = None
 
 #tv = thetvdb.TVShow('94571')
 
@@ -119,8 +121,8 @@ class Classifier(Daemon):
     Return a classification from the Video class.
     
     """
-    
-    features = get_video_features(filename)
+    self.log.print_log_verbose("classify(), filename: %s" % str(filename))
+    features = self.get_video_features(filename)
     if features is not None:
       self.log.print_log_verbose("classifying "+str(filename))
       self.log.print_log_verbose("features: "+str(features))
@@ -136,6 +138,14 @@ class Classifier(Daemon):
     self.log.print_log("X:\n"+str(self.__X))
     self.log.print_log("y:\n"+str(self.__y))
   
+  def setup_channel(self,delete_if_empty=False):
+    """Configure the amqp channel.
+    delete_if_empty: delete the queue before declaring it
+    Return the created channel object
+    
+    """
+    pass
+  
   def run(self):
     """Override for inherited run method of the Daemon class.
     
@@ -146,13 +156,33 @@ class Classifier(Daemon):
       elif self.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
         connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.amqp_host))
+        self.log.print_log("connection initialized")
         if connection:
           channel = connection.channel()
-          channel.queue_declare(queue=self.amqp_queue)
-          def callback(ch, method, properties, body):
+          self.log.print_log("channel initialized")
+          #delete the queue if it is empty. I found if you change a queue setting (durable)
+          #  while it exists, the queue_declare() bombs
+          channel.queue_delete(queue=self.amqp_queue) #, if_empty=True)
+          self.log.print_log("queue deleted")
+          channel.queue_declare(queue=self.amqp_queue, durable=True)
+          self.log.print_log("queue declared")
+          #qos allows for better handling of multiple clients
+          channel.basic_qos(prefetch_count=1)
+          self.log.print_log("channel setup")
+          def on_request(ch, method, properties, body):
             self.log.print_log_verbose("received message: %s" % body)
+            result = self.classify(body)
+            self.log.print_log_verbose("classified as %s" % str(result))
+            ch.basic_publish(exchange='',
+                             routing_key=properties.reply_to,
+                             properties=pika.BasicProperties(correlation_id = properties.correlation_id),
+                             body=str(result))
+            self.log.print_log_verbose("sent response")
+            ch.basic_ack(delivery_tag = method.delivery_tag)
+            self.log.print_log_verbose("acknowledged %s" % method.delivery_tag)
+          
           self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
-          channel.basic_consume(callback,queue=self.amqp_queue,no_ack=True)
+          channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
           channel.start_consuming()
         else:
@@ -165,6 +195,7 @@ class Classifier(Daemon):
     """
     self.log.print_log("classifier daemon is shutting down (pid %s)" % str(os.getpid()))
     Daemon.stop(self)
+    
 
 class Logger():
   def __init__(self,logfile_path=None,verbose=False):
@@ -283,10 +314,41 @@ def classify(filename):
   connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
   channel = connection.channel()
   
-  channel.queue_declare(queue='classifyd')
+  channel.queue_declare(queue='classifyd', durable=True)
   
-  channel.basic_publish(exchange='',routing_key='classifyd',body=filename)
+  #the correlation id will make sure we are reading the response to our request
+  corr_id = str(uuid.uuid4())
+  
+  #setup the response callback
+  global response
+  response = None
+  def on_response(ch, method, props, body):
+    log.print_log("received %s" % str(body))
+    if corr_id == props.correlation_id:
+      global response
+      #return int(response.body)
+      response = int(body)
+  
+  #setup the response queue
+  result = channel.queue_declare(exclusive=True)
+  response_queue = result.method.queue
+  channel.basic_consume(on_response, no_ack=True, queue=response_queue)
+  
+  #delivery_mode=2 means persistent
+  #send the request
+  channel.basic_publish(exchange='',routing_key='classifyd',
+                        properties=pika.BasicProperties(
+                                                        reply_to = response_queue,
+                                                        correlation_id = corr_id,
+                                                        delivery_mode = 2),
+                        body=filename)
   log.print_log("sent %s" % str(filename))
+  
+  #wait for the response
+  while response is None:
+    connection.process_data_events()
+  return int(response)
+  
   connection.close()
   return -1
 
