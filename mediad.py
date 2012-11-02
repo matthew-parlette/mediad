@@ -420,43 +420,12 @@ def main():
         log.print_error_and_exit("error loading media data")
     elif args.classifier[0] == 'stop':
       classifier.stop()
-<<<<<<< HEAD
-<<<<<<< HEAD
-    elif args.daemon[0] == 'restart':
-<<<<<<< HEAD
-      pass
-  print_log("gathering training data...")
-  classifier = Classifier(config.get("GENERAL","pidfile"))
-=======
-      classifier.restart()
-=======
->>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
-    exit(0)
-=======
     elif args.classifier[0] == 'status':
       if classifier.get_pid():
         log.print_log_and_stdout("classifier daemon is running, pid %s" % classifier.get_pid())
       else:
         log.print_log_and_stdout("classifier daemon is not running")
->>>>>>> fa2a98e... implemented classifier status command
-  
-<<<<<<< HEAD
-  #running past this point is bad news until I figure out daemon communication
-  exit(0)
-<<<<<<< HEAD
-  log.print_log("gathering training data...")
->>>>>>> 32a6755... while troubleshooting the daemon not logging, I added a Logger class to handle all logging (or output to stdout). I hope this will resolve the daemon not logging.
-  classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
-  classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
-  log.print_log("...done")
-=======
-  
->>>>>>> b0d30a6... moved the classifier to its on daemon, then i'll have mediad be its own daemon. The classifier is loaded with the training data before it is started. When the daemon is running, if it detects that the classifier is not trained, it will train it, so the code can skip the process of actually calling Classifier.train()
-  log.print_log("training SVM...")
-  classifier.train()
-  log.print_log("...done")
-=======
->>>>>>> 7357e18... setup rabbitmq as the message handler, configured the classifier to listen for messages (which are only filenames for now), and the -f option to send the filename to the queue
+
   if args.plot:
     log.print_log("plotting training data...")
     
