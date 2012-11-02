@@ -238,9 +238,7 @@ class Logger():
     This should print to the logfile (if defined) as well as the stdout.
     
     """
-    self.print_log("ERROR: %s" % (message))
-    if self.logfile is not None:
-      print "ERROR: %s" % (message)
+    self.print_log_and_stdout("ERROR: %s" % (message))
 
   def print_error_and_exit(self,message):
     self.print_error(message)
