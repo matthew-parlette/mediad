@@ -144,7 +144,32 @@ class Classifier(Daemon):
     Return the created channel object
     
     """
-    pass
+    try:
+      #create connection
+      connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.amqp_host))
+      self.log.print_log_verbose("connection initialized")
+      
+      #create channel
+      channel = connection.channel()
+      self.log.print_log("channel initialized")
+      
+      #if the parameter is passed, then delete the queue, but only if empty
+      #if we don't delete the queue and change a setting (durable, for example)
+      #  then the queue_declare() bombs
+      if delete_if_empty:
+        channel.queue_delete(queue=self.amqp_queue, if_empty=True)
+      
+      #declare the queue
+      channel.queue_declare(queue=self.amqp_queue, durable=True)
+      self.log.print_log("queue declared")
+      
+      #qos allows for better handling of multiple clients
+      channel.basic_qos(prefetch_count=1)
+      return channel
+    except:
+      #this should be more robust and remove the catch-all except
+      self.log.print_error_and_exit("channel not created: %s" % sys.exc_info()[0])
+      return None
   
   def run(self):
     """Override for inherited run method of the Daemon class.
@@ -155,22 +180,11 @@ class Classifier(Daemon):
         self.train()
       elif self.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.amqp_host))
-        self.log.print_log("connection initialized")
-        if connection:
-          channel = connection.channel()
-          self.log.print_log("channel initialized")
-          #delete the queue if it is empty. I found if you change a queue setting (durable)
-          #  while it exists, the queue_declare() bombs
-          channel.queue_delete(queue=self.amqp_queue) #, if_empty=True)
-          self.log.print_log("queue deleted")
-          channel.queue_declare(queue=self.amqp_queue, durable=True)
-          self.log.print_log("queue declared")
-          #qos allows for better handling of multiple clients
-          channel.basic_qos(prefetch_count=1)
-          self.log.print_log("channel setup")
+        channel = self.setup_channel(delete_if_empty=True)
+        if channel:
+          self.log.print_log_verbose("channel setup")
           def on_request(ch, method, properties, body):
-            self.log.print_log_verbose("received message: %s" % body)
+            self.log.print_log_verbose("received message (delivery tag %s): %s" % (method.delivery_tag,body))
             result = self.classify(body)
             self.log.print_log_verbose("classified as %s" % str(result))
             ch.basic_publish(exchange='',
@@ -181,12 +195,13 @@ class Classifier(Daemon):
             ch.basic_ack(delivery_tag = method.delivery_tag)
             self.log.print_log_verbose("acknowledged %s" % method.delivery_tag)
           
+          #everything is ready to go, now start the consuming of the queue
           self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
           channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
           channel.start_consuming()
         else:
-          self.log.print_error_and_exit("could not connect to rabbitmq server, is it installed and running?")
+          self.log.print_error_and_exit("error creating rabbitmq channel")
   
   def stop(self):
     """Override for inherited stop method of Daemon class.
