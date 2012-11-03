@@ -51,6 +51,10 @@ class Classifier(Daemon):
     #call the parent's __init__ to initialize the daemon variables
     #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
+    #create the channel
+    self.channel = self.setup_channel(delete_if_empty=True)
+    if self.channel is None:
+      self.log.print_error_and_exit("channel creation failed, classifier exiting...")
   
   def __repr__(self):
     if self.get_pid() is None:
@@ -192,9 +196,8 @@ class Classifier(Daemon):
         self.train()
       elif Classifier.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
-        channel = self.setup_channel(delete_if_empty=True)
-        if channel:
-          self.log.print_log_verbose("channel setup")
+        if self.channel:
+          self.log.print_log_verbose("channel appears available")
           def on_request(ch, method, properties, body):
             self.log.print_log_verbose("received message (delivery tag %s): %s" % (method.delivery_tag,body))
             result = self.classify(body)
@@ -209,9 +212,9 @@ class Classifier(Daemon):
           
           #everything is ready to go, now start the consuming of the queue
           self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
-          channel.basic_consume(on_request,queue=self.amqp_queue)
+          self.channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
-          channel.start_consuming()
+          self.channel.start_consuming()
         else:
           self.log.print_error_and_exit("error creating rabbitmq channel")
   
