@@ -129,7 +129,7 @@ class Daemon:
     self.stop()
     self.start()
 
-  def status(self):
+  def daemon_status(self):
     """
     An alias for the get_pid() method.
     """

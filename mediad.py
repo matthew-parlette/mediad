@@ -31,7 +31,10 @@ class Video:
   movie=0
 
 class Classifier(Daemon):
+  status = None
+  
   def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost'):
+    #fix the resetting of all variables, variables are shared across instances
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
@@ -41,11 +44,19 @@ class Classifier(Daemon):
       self.log = Logger(logfile_path,args.verbose)
     else:
       self.log = Logger(logfile_path)
-    #status in {'initializing','training','ready'}
-    self.status = 'initializing'
+    #if not hasattr(self,'status'):
+    if Classifier.status is None:
+      log.print_log("setting status to initializing")
+      Classifier.status = 'initializing'
     #call the parent's __init__ to initialize the daemon variables
     #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
+  
+  def __repr__(self):
+    if self.get_pid() is None:
+      return "classifyd is not running"
+    else:
+      return "classifyd is running (status: %s)" % str(Classifier.status)
   
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
@@ -111,10 +122,11 @@ class Classifier(Daemon):
 
   def train(self):
     self.log.print_log_verbose("training with data\nX:\n%s\ny:\n%s" % (str(self.__X),str(self.__y)))
-    self.status = 'training'
+    Classifier.status = 'training'
     self.svc.fit(self.__X,self.__y)
+    time.sleep(30)
     self.log.print_log_verbose("classifier is trained and ready")
-    self.status = 'ready'
+    Classifier.status = 'ready'
   
   def classify(self,filename):
     """Classify the given file using the SVM.
@@ -176,9 +188,9 @@ class Classifier(Daemon):
     
     """
     while True:
-      if self.status == 'initializing':
+      if Classifier.status == 'initializing':
         self.train()
-      elif self.status == 'ready':
+      elif Classifier.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
         channel = self.setup_channel(delete_if_empty=True)
         if channel:
@@ -210,7 +222,6 @@ class Classifier(Daemon):
     """
     self.log.print_log("classifier daemon is shutting down (pid %s)" % str(os.getpid()))
     Daemon.stop(self)
-    
 
 class Logger():
   def __init__(self,logfile_path=None,verbose=False):
@@ -413,16 +424,13 @@ def main():
         classifier.stop()
       if load_media_data(classifier):
         classifier.start()
-        print classifier.get_pid()
+        log.print_log_and_stdout(str(classifier)) #why isn't this printing?
       else:
         log.print_error_and_exit("error loading media data")
     elif args.classifier[0] == 'stop':
       classifier.stop()
     elif args.classifier[0] == 'status':
-      if classifier.get_pid():
-        log.print_log_and_stdout("classifier daemon is running, pid %s" % classifier.get_pid())
-      else:
-        log.print_log_and_stdout("classifier daemon is not running")
+      log.print_log_and_stdout(str(classifier))
 
   if args.plot:
     log.print_log("plotting training data...")
