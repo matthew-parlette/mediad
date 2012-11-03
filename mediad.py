@@ -182,9 +182,9 @@ class Classifier(Daemon):
       #qos allows for better handling of multiple clients
       channel.basic_qos(prefetch_count=1)
       return channel
-    except:
+    except Exception,e:
       #this should be more robust and remove the catch-all except
-      self.log.print_error_and_exit("channel not created: %s" % sys.exc_info()[0])
+      self.log.print_error_and_exit("channel not created: %s (%s)" % (str(e),sys.exc_info()[0]))
       return None
   
   def run(self):
