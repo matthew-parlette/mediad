@@ -13,6 +13,7 @@ from sklearn.externals import joblib
 from daemon import Daemon
 import pika
 import uuid
+import traceback
 
 #Global Arguments
 version = '0.1'
@@ -154,7 +155,8 @@ class Classifier(Daemon):
         joblib.dump(self.svc, self.svm_filename, compress=9)
         self.log.print_log_verbose("SVM saved as %s" % str(self.svm_filename))
       except Exception,e:
-        self.log.print_error("Error saving SVM to %s: %s" % (str(self.svm_filename),sys.exc_info()[0]))
+        self.log.print_error("Error saving SVM to %s: %s %s" % (str(self.svm_filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
     Classifier.status = 'ready'
   
