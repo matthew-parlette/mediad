@@ -51,10 +51,7 @@ class Classifier(Daemon):
     #call the parent's __init__ to initialize the daemon variables
     #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
-    #create the channel
-    self.channel = self.setup_channel(delete_if_empty=True)
-    if self.channel is None:
-      self.log.print_error_and_exit("channel creation failed, classifier exiting...")
+    #self.channel = self.setup_channel(delete_if_empty=True)
   
   def __repr__(self):
     if self.get_pid() is None:
@@ -125,11 +122,12 @@ class Classifier(Daemon):
     
 
   def train(self):
-    self.log.print_log_verbose("training with data\nX:\n%s\ny:\n%s" % (str(self.__X),str(self.__y)))
+    """Train the SVM with the current __X matrix and __y vector.
+    
+    """
     Classifier.status = 'training'
     self.svc.fit(self.__X,self.__y)
-    time.sleep(30)
-    self.log.print_log_verbose("classifier is trained and ready")
+    self.log.print_log_verbose("returning from train(): classifier is trained and ready")
     Classifier.status = 'ready'
   
   def classify(self,filename):
@@ -159,6 +157,7 @@ class Classifier(Daemon):
     delete_if_empty: delete the queue before declaring it
     Return the created channel object
     
+    This method is not working and should be avoided for now.
     """
     try:
       #create connection
@@ -172,10 +171,16 @@ class Classifier(Daemon):
       #if the parameter is passed, then delete the queue, but only if empty
       #if we don't delete the queue and change a setting (durable, for example)
       #  then the queue_declare() bombs
+      #channel.queue_delete(queue=self.amqp_queue, if_empty=True)
       if delete_if_empty:
-        channel.queue_delete(queue=self.amqp_queue, if_empty=True)
+        #since there is no method for queue_exists, we use a try block
+        try:
+          channel.queue_delete(queue=self.amqp_queue, if_empty=True)
+        except pika.exceptions.AMQPChannelError, e:
+          self.log.print_log_verbose("tried to delete %s queue but received an error. If this is 404, it should be no problem. Error was %s" % (self.amqp_queue,str(e)))
       
       #declare the queue
+      self.log.print_log("declaring queue")
       channel.queue_declare(queue=self.amqp_queue, durable=True)
       self.log.print_log("queue declared")
       
@@ -193,10 +198,47 @@ class Classifier(Daemon):
     """
     while True:
       if Classifier.status == 'initializing':
+        #self.channel = self.setup_channel(delete_if_empty=True)
         self.train()
       elif Classifier.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
-        if self.channel:
+        #channel = self.setup_channel(delete_if_empty=True)
+        
+        """
+        This code below is copied from setup_channel() method because the queue_declare call
+        seems to block (when I expect the start_consuming() to be blocking instead), so I'll keep the
+        copied code below until I figure out how to get the channel from another method.
+        """
+        
+        ###################################
+        #this is copied from setup_channel#
+        ###################################
+        
+        try:
+          #create connection
+          connection = pika.BlockingConnection(pika.ConnectionParameters(host=self.amqp_host))
+          self.log.print_log_verbose("connection initialized")
+          
+          #create channel
+          channel = connection.channel()
+          self.log.print_log("channel initialized")
+          
+          #declare the queue
+          self.log.print_log("delcaring queue")
+          channel.queue_declare(queue=self.amqp_queue, durable=True, exclusive=False, auto_delete=False)
+          self.log.print_log("queue declared")
+          
+          #qos allows for better handling of multiple clients
+          channel.basic_qos(prefetch_count=1)
+        except Exception,e:
+          #this should be more robust and remove the catch-all except
+          self.log.print_error_and_exit("channel not created: %s (%s)" % (str(e),sys.exc_info()[0]))
+        
+        ###################################
+        #this is copied from setup_channel#
+        ###################################
+        
+        if channel:
           self.log.print_log_verbose("channel appears available")
           def on_request(ch, method, properties, body):
             self.log.print_log_verbose("received message (delivery tag %s): %s" % (method.delivery_tag,body))
@@ -212,11 +254,11 @@ class Classifier(Daemon):
           
           #everything is ready to go, now start the consuming of the queue
           self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
-          self.channel.basic_consume(on_request,queue=self.amqp_queue)
+          channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
-          self.channel.start_consuming()
+          channel.start_consuming()
         else:
-          self.log.print_error_and_exit("error creating rabbitmq channel")
+          self.log.print_error_and_exit("rabbitmq channel creation failed, classifier exiting...")
   
   def stop(self):
     """Override for inherited stop method of Daemon class.
@@ -341,7 +383,9 @@ def classify(filename):
   connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
   channel = connection.channel()
   
+  log.print_log_verbose("declaring queue")
   channel.queue_declare(queue='classifyd', durable=True)
+  log.print_log_verbose("queue declared")
   
   #the correlation id will make sure we are reading the response to our request
   corr_id = str(uuid.uuid4())
