@@ -9,6 +9,7 @@ import kaa.metadata
 import pylab as pl
 from numpy import array,vstack,hstack,mgrid,c_
 from sklearn import svm
+from sklearn.externals import joblib
 from daemon import Daemon
 import pika
 import uuid
@@ -33,13 +34,14 @@ class Video:
 class Classifier(Daemon):
   status = None
   
-  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost'):
+  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None):
     #fix the resetting of all variables, variables are shared across instances
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
     self.__y = None
     self.amqp_host = amqp_host
     self.amqp_queue = 'classifyd'
+    self.svm_filename = os.path.abspath(svm_save_filename) if svm_save_filename else None
     if args:
       self.log = Logger(logfile_path,args.verbose)
     else:
@@ -119,14 +121,40 @@ class Classifier(Daemon):
       else:
         self.__X = vstack((self.__X,X_rows))
         self.__y = hstack((self.__y,y_rows))
+  
+  def load_from_file(self,filename = None):
+    """Load the saved SVM from a file. If the file does not exist or could not be loaded, then return false.
     
+    """
+    
+    if filename and os.path.exists(filename):
+      try:
+        self.svc = joblib.load(filename)
+        Classifier.status = 'ready'
+        self.log.print_log_verbose("load_from_file(): SVM loaded from %s" % filename)
+      except Exception,e:
+        self.log.print_error("SVM could not be loaded from file (%s), error was %s" % (str(filename),sys.exc_info()[0]))
+        return False
+      return True
+    else:
+      self.log.print_log_verbose("load_from_file() called with invalid filename (filename: %s)" % str(filename))
+      return False
 
   def train(self):
     """Train the SVM with the current __X matrix and __y vector.
     
     """
     Classifier.status = 'training'
+    #train with the current __X and __y
     self.svc.fit(self.__X,self.__y)
+    self.log.print_log("filename: %s" % self.svm_filename)
+    if self.svm_filename:
+      self.log.print_log_verbose("saving SVM to %s" % str(self.svm_filename))
+      try:
+        joblib.dump(self.svc, self.svm_filename, compress=9)
+        self.log.print_log_verbose("SVM saved as %s" % str(self.svm_filename))
+      except Exception,e:
+        self.log.print_error("Error saving SVM to %s: %s" % (str(self.svm_filename),sys.exc_info()[0]))
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
     Classifier.status = 'ready'
   
@@ -196,9 +224,10 @@ class Classifier(Daemon):
     """Override for inherited run method of the Daemon class.
     
     """
+    self.log.print_log_verbose("run() called. classifier status is %s." % str(Classifier.status))
+    
     while True:
       if Classifier.status == 'initializing':
-        #self.channel = self.setup_channel(delete_if_empty=True)
         self.train()
       elif Classifier.status == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
@@ -351,6 +380,12 @@ def load_media_data(classifier):
   Returns the results in a boolean.
   
   """
+  if config.has_option("CLASSIFIER","svm_filename") and classifier.load_from_file(config.get("CLASSIFIER","svm_filename")):
+    log.print_log("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
+    return True
+  else:
+    log.print_log_verbose("svm_filename not provided or load failed. Now loading from scratch")
+  
   log.print_log("gathering training data...")
   classifier.gather_training_data(config.get("TV","tv_dir"),Video.tv)
   classifier.gather_training_data(config.get("MOVIES","movie_dir"),Video.movie)
@@ -465,15 +500,21 @@ def main():
     if not args.classifier[0] or args.classifier[0] not in ('start','stop','restart','status'):
       log.print_error_and_exit("expected classifier argument in {start|stop|restart|status}")
     #at this point, we have a valid daemon command
-    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path)
+    svm_filename = config.get("CLASSIFIER","svm_filename") if config.has_option("CLASSIFIER","svm_filename") else None
+    
+    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename)
     if args.classifier[0] in ('start','restart'):
       if args.classifier[0] == 'restart':
         classifier.stop()
-      if load_media_data(classifier):
-        classifier.start()
-        log.print_log_and_stdout(str(classifier)) #why isn't this printing?
+      if classifier.get_pid():
+        #if the classifier is already running, then we won't load the media data again
+        log.print_log_and_stdout("classifier daemon already running (pid %s)" % classifier.get_pid())
       else:
-        log.print_error_and_exit("error loading media data")
+        if load_media_data(classifier):
+          classifier.start()
+          log.print_log_and_stdout(str(classifier)) #why isn't this printing?
+        else:
+          log.print_error_and_exit("error loading media data")
     elif args.classifier[0] == 'stop':
       classifier.stop()
     elif args.classifier[0] == 'status':
