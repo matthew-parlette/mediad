@@ -14,6 +14,7 @@ from daemon import Daemon
 import pika
 import uuid
 import traceback
+import pickle
 
 #Global Arguments
 version = '0.1'
@@ -34,6 +35,19 @@ class Video:
 
 class Classifier(Daemon):
   status = None
+  
+  class Status():
+    def __init__(self):
+      self.message = 'initializing'
+    
+    @property
+    def message(self):
+      """The status message as a string."""
+      return self.message
+    
+    @message.setter
+    def message(self,value):
+      self.message = value
   
   def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None):
     #fix the resetting of all variables, variables are shared across instances
