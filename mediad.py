@@ -77,7 +77,6 @@ class Classifier(Daemon):
     self.amqp_queue = 'classifyd'
     self.svm_filename = os.path.abspath(svm_save_filename) if svm_save_filename else None
     
-    #if not hasattr(self,'status'):
     self.status_filename = status_filename
     if self.status_filename and os.path.exists(self.status_filename):
       #if the file exists, try to load it from there
@@ -88,9 +87,7 @@ class Classifier(Daemon):
       #if not, then assume we are starting over
       self.status = Status()
     #call the parent's __init__ to initialize the daemon variables
-    #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
-    #self.channel = self.setup_channel(delete_if_empty=True)
   
   def __repr__(self):
     if self.get_pid() is None:
@@ -227,7 +224,7 @@ class Classifier(Daemon):
       try:
         self.svc = joblib.load(filename)
         self.update_status("ready")
-        self.log.print_log_verbose("load_svm_from_file(): SVM loaded from %s" % filename)
+        self.log.print_log("SVM loaded from %s" % filename)
         
         #X and y should be available for loading as well
         self.__X = self.load_pickle(self.X_filename)
@@ -282,6 +279,7 @@ class Classifier(Daemon):
           self.log.print_log_error("Error saving y vector pickle")
       else:
         self.log.print_log_error("Error saving X Matrix pickle")
+        
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
     self.update_status('ready')
   
@@ -290,7 +288,6 @@ class Classifier(Daemon):
     Return a classification from the Video class.
     
     """
-    self.log.print_log_verbose("classify(), filename: %s" % str(filename))
     features = self.get_video_features(filename)
     if features is not None:
       self.log.print_log_verbose("classifying "+str(filename))
@@ -377,12 +374,12 @@ class Classifier(Daemon):
           
           #create channel
           channel = connection.channel()
-          self.log.print_log("channel initialized")
+          self.log.print_log_verbose("channel initialized")
           
           #declare the queue
-          self.log.print_log("delcaring queue")
+          self.log.print_log_verbose("delcaring queue")
           channel.queue_declare(queue=self.amqp_queue, durable=True, exclusive=False, auto_delete=False)
-          self.log.print_log("queue declared")
+          self.log.print_log_verbose("queue declared")
           
           #qos allows for better handling of multiple clients
           channel.basic_qos(prefetch_count=1)
@@ -409,7 +406,7 @@ class Classifier(Daemon):
             self.log.print_log_verbose("acknowledged %s" % method.delivery_tag)
           
           #everything is ready to go, now start the consuming of the queue
-          self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
+          self.log.print_log("queue %s declared, listening for messages..." % self.amqp_queue)
           channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
           channel.start_consuming()
