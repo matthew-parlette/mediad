@@ -193,7 +193,8 @@ class Classifier(Daemon):
         self.update_status("ready")
         self.log.print_log_verbose("load_from_file(): SVM loaded from %s" % filename)
       except Exception,e:
-        self.log.print_error("SVM could not be loaded from file (%s), error was %s" % (str(filename),sys.exc_info()[0]))
+        self.log.print_error("SVM could not be loaded from file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
         return False
       return True
     else:
