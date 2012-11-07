@@ -239,7 +239,7 @@ class Classifier(Daemon):
       try:
         self.svc = joblib.load(filename)
         self.update_status("ready")
-        self.log.print_log("SVM loaded from %s" % filename)
+        self.log.print_log("Classifier SVM loaded from %s" % filename)
         
         #X and y should be available for loading as well
         self.__X = self.load_pickle(self.X_filename)
@@ -522,7 +522,7 @@ def load_media_data(classifier):
   
   """
   if config.has_option("CLASSIFIER","svm_filename") and classifier.load_svm_from_file(config.get("CLASSIFIER","svm_filename")):
-    log.print_log("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
+    log.print_log_verbose("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
     return True
   else:
     log.print_log_verbose("svm_filename not provided or load failed. Now loading from scratch")
