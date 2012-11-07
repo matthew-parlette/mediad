@@ -68,6 +68,9 @@ class Classifier(Daemon):
     else:
       self.log = Logger(logfile_path)
     
+    #For progress messages
+    self.files_processed = 0
+    
     self.svc = svm.SVC(kernel="linear")
     self.X_filename = os.path.abspath(X_filename) if X_filename else None
     self.y_filename = os.path.abspath(y_filename) if y_filename else None
@@ -120,6 +123,17 @@ class Classifier(Daemon):
         self.log.print_error("Error saving status to %s: %s %s" % (str(self.status_filename),sys.exc_info()[0],e))
         self.log.print_error("Traceback: %s" % traceback.format_exc())
   
+  def update_progress(self,files_processed=1):
+    """Update the user of the progress of the system so far, generally while gathering training data.
+    This will update the self.files_processed variable by adding on the files_processed variable.
+    At a cutoff, it will update the log of its progress.
+    
+    """
+    self.files_processed += files_processed
+    #Update every 500 files
+    if self.files_processed % 500 == 0:
+      self.log.print_log("Progress update, %s files processed for training data" % str(self.files_processed))
+  
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
     
@@ -170,6 +184,7 @@ class Classifier(Daemon):
             X_rows.append(row)
             y_rows.append(classification)
             self.update_status(stat_key='training examples')
+            self.update_progress(files_processed=1)
     
     #now add the gathered data to the array
     if len(X_rows) > 0:
