@@ -7,7 +7,7 @@ import os
 import time
 import kaa.metadata
 import pylab as pl
-from numpy import array,vstack,hstack,mgrid,c_
+from numpy import array,vstack,hstack,mgrid,c_,shape
 from sklearn import svm
 from sklearn.externals import joblib
 from daemon import Daemon
@@ -36,6 +36,7 @@ class Video:
 class Status():
   def __init__(self):
     self.message = 'initializing'
+    self.statistics = {}
   
   @property
   def message(self):
@@ -45,6 +46,18 @@ class Status():
   @message.setter
   def message(self,value):
     self.message = value
+  
+  def add_stat(self,key,amount=1):
+    """Add a number to a particular statistic category.
+    By default, if you provide the category (for example 'files') without an amount parameter, then 1 will be added to the 'files' statistic
+    
+    You can also provide an amount to add to the statistic, including a negative number.
+    This should only be used for integer statistics
+    """
+    if key not in self.statistics:
+      self.statistics[key] = amount
+    else:
+      self.statistics[key] += amount
 
 class Classifier(Daemon):
   
@@ -82,14 +95,22 @@ class Classifier(Daemon):
     else:
       return "classifyd is running (status: %s)" % str(self.status.message)
   
-  def update_status(self,message=None):
+  def get_statistics(self):
+    if self.get_pid():
+      return str(self.status.statistics)
+    return None
+  
+  def update_status(self,message=None,stat_key=None,stat_value=None):
     if message:
       self.log.print_log_verbose("updating status message to '%s'" % message)
       self.status.message = message
       self.log.print_log_verbose("status message set to '%s'" % message)
     
+    if stat_key:
+      self.status.add_stat(stat_key,amount=int(stat_value if stat_value else 1))
+    
     #if something was updated, save it
-    if self.status_filename and (message):
+    if self.status_filename and (message or stat_key):
       try:
         output = open(self.status_filename,'wb')
         pickle.dump(self.status,output)
@@ -148,6 +169,7 @@ class Classifier(Daemon):
             self.log.print_log_verbose("adding row: "+str(row))
             X_rows.append(row)
             y_rows.append(classification)
+            self.update_status(stat_key='training examples')
     
     #now add the gathered data to the array
     if len(X_rows) > 0:
@@ -561,6 +583,7 @@ def main():
       classifier.stop()
     elif args.classifier[0] == 'status':
       log.print_log_and_stdout(str(classifier))
+      log.print_log_and_stdout("statistics: %s" % str(classifier.get_statistics()))
 
   if args.plot:
     log.print_log("plotting training data...")
