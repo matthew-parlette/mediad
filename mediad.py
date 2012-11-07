@@ -62,18 +62,21 @@ class Status():
 class Classifier(Daemon):
   
   def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None,
-               status_filename = None):
-    #fix the resetting of all variables, variables are shared across instances
+               status_filename = None, X_filename = None, y_filename = None):
+    if args:
+      self.log = Logger(logfile_path,args.verbose)
+    else:
+      self.log = Logger(logfile_path)
+    
     self.svc = svm.SVC(kernel="linear")
+    self.X_filename = os.path.abspath(X_filename) if X_filename else None
+    self.y_filename = os.path.abspath(y_filename) if y_filename else None
     self.__X = None
     self.__y = None
     self.amqp_host = amqp_host
     self.amqp_queue = 'classifyd'
     self.svm_filename = os.path.abspath(svm_save_filename) if svm_save_filename else None
-    if args:
-      self.log = Logger(logfile_path,args.verbose)
-    else:
-      self.log = Logger(logfile_path)
+    
     #if not hasattr(self,'status'):
     self.status_filename = status_filename
     if self.status_filename and os.path.exists(self.status_filename):
@@ -173,8 +176,8 @@ class Classifier(Daemon):
     
     #now add the gathered data to the array
     if len(X_rows) > 0:
-      self.log.print_log_verbose("X_rows: "+str(X_rows))
-      self.log.print_log_verbose("y_rows: "+str(y_rows))
+      self.log.print_log_verbose("Adding X_rows: "+str(X_rows))
+      self.log.print_log_verbose("Adding y_rows: "+str(y_rows))
       if self.__X is None:
         self.__X = array(X_rows)
         self.__y = array(y_rows)
@@ -182,7 +185,40 @@ class Classifier(Daemon):
         self.__X = vstack((self.__X,X_rows))
         self.__y = hstack((self.__y,y_rows))
   
-  def load_from_file(self,filename = None):
+  def load_pickle(self,filename = None):
+    """Load the object from the file and return it.
+    
+    """
+    if filename and os.path.exists(filename):
+      try:
+        f = open(filename,'rb')
+        result = pickle.load(f)
+        f.close()
+        self.log.print_log_verbose("Loaded object from file %s" % filename)
+        self.log.print_log_verbose("Object data: %s" % str(result))
+        return result
+      except Exception,e:
+        self.log.print_error("Pickle count not be loaded from file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
+        return None
+    return None
+  
+  def save_pickle(self,obj,filename = None):
+    """Save the object to a file."""
+    if filename:
+      try:
+        output = open(filename,'wb')
+        pickle.dump(obj,output)
+        output.close()
+        self.log.print_log_verbose("save_pickle(): Saved object to file %s" % filename)
+        return True
+      except Exception,e:
+        self.log.print_error("Object could not be saved to file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
+        return False
+    return False
+  
+  def load_svm_from_file(self,filename = None):
     """Load the saved SVM from a file. If the file does not exist or could not be loaded, then return false.
     
     """
@@ -191,14 +227,24 @@ class Classifier(Daemon):
       try:
         self.svc = joblib.load(filename)
         self.update_status("ready")
-        self.log.print_log_verbose("load_from_file(): SVM loaded from %s" % filename)
+        self.log.print_log_verbose("load_svm_from_file(): SVM loaded from %s" % filename)
+        
+        #X and y should be available for loading as well
+        self.__X = self.load_pickle(self.X_filename)
+        self.__y = self.load_pickle(self.y_filename)
+        
+        #Set the status statistic for training examples
+        if len(self.__X) > 0:
+          self.update_status(stat_key='training examples',stat_value=int(len(self.__X)))
+        else:
+          self.log.print_error("self.__X was empty, but I expected it to have values loaded from a pickle save file. Status statistics will not work for the running daemon")
       except Exception,e:
         self.log.print_error("SVM could not be loaded from file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
         self.log.print_error("Traceback: %s" % traceback.format_exc())
         return False
       return True
     else:
-      self.log.print_log_verbose("load_from_file() called with invalid filename (filename: %s)" % str(filename))
+      self.log.print_log_verbose("load_svm_from_file() called with invalid filename (filename: %s)" % str(filename))
       return False
 
   def train(self):
@@ -206,9 +252,17 @@ class Classifier(Daemon):
     
     """
     self.update_status('training')
+    #Since we are re-training, we delete the pickled X and y if they exist
+    if self.X_filename and os.path.exists(self.X_filename):
+      os.remove(self.X_filename)
+    if self.y_filename and os.path.exists(self.y_filename):
+      os.remove(self.y_filename)
+    
     #train with the current __X and __y
     self.svc.fit(self.__X,self.__y)
     self.log.print_log("filename: %s" % self.svm_filename)
+    
+    #Save the SVM to file
     if self.svm_filename:
       self.log.print_log_verbose("saving SVM to %s" % str(self.svm_filename))
       try:
@@ -217,6 +271,17 @@ class Classifier(Daemon):
       except Exception,e:
         self.log.print_error("Error saving SVM to %s: %s %s" % (str(self.svm_filename),sys.exc_info()[0],e))
         self.log.print_error("Traceback: %s" % traceback.format_exc())
+      self.log.print_log_verbose("pickling %s %s" % (str(self.__X),self.X_filename))
+      
+      #Save the X and y variables
+      if self.save_pickle(self.__X,self.X_filename):
+        self.log.print_log("X Matrix (size %s) saved to %s" % (shape(self.__X),self.X_filename))
+        if self.save_pickle(self.__y,self.y_filename):
+          self.log.print_log("y Vector (size %s) saved to %s" % (shape(self.__y),self.y_filename))
+        else:
+          self.log.print_log_error("Error saving y vector pickle")
+      else:
+        self.log.print_log_error("Error saving X Matrix pickle")
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
     self.update_status('ready')
   
@@ -444,7 +509,7 @@ def load_media_data(classifier):
   Returns the results in a boolean.
   
   """
-  if config.has_option("CLASSIFIER","svm_filename") and classifier.load_from_file(config.get("CLASSIFIER","svm_filename")):
+  if config.has_option("CLASSIFIER","svm_filename") and classifier.load_svm_from_file(config.get("CLASSIFIER","svm_filename")):
     log.print_log("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
     return True
   else:
@@ -566,8 +631,11 @@ def main():
     #at this point, we have a valid daemon command
     svm_filename = config.get("CLASSIFIER","svm_filename") if config.has_option("CLASSIFIER","svm_filename") else None
     status_filename = config.get("CLASSIFIER","status_filename") if config.has_option("CLASSIFIER","status_filename") else None
+    X_filename = config.get("CLASSIFIER","X_filename") if config.has_option("CLASSIFIER","X_filename") else None
+    y_filename = config.get("CLASSIFIER","y_filename") if config.has_option("CLASSIFIER","y_filename") else None
     
-    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename,status_filename=status_filename)
+    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename,
+                                       status_filename=status_filename,X_filename=X_filename,y_filename=y_filename)
     if args.classifier[0] in ('start','restart'):
       if args.classifier[0] == 'restart':
         classifier.stop()
