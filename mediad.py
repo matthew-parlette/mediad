@@ -71,6 +71,9 @@ class Classifier(Daemon):
     #For progress messages
     self.files_processed = 0
     
+    #Make sure pickle supports compress
+    pickle.HIGHEST_PROTOCOL
+    
     self.svc = svm.SVC(kernel="linear")
     self.X_filename = os.path.abspath(X_filename) if X_filename else None
     self.y_filename = os.path.abspath(y_filename) if y_filename else None
