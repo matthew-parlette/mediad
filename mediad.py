@@ -14,7 +14,7 @@ from daemon import Daemon
 import pika
 import uuid
 import traceback
-import pickle
+import cPickle as pickle
 
 #Global Arguments
 version = '0.1'
@@ -33,23 +33,23 @@ class Video:
   tv=1
   movie=0
 
+class Status():
+  def __init__(self):
+    self.message = 'initializing'
+  
+  @property
+  def message(self):
+    """The status message as a string."""
+    return self.message
+  
+  @message.setter
+  def message(self,value):
+    self.message = value
+
 class Classifier(Daemon):
-  status = None
   
-  class Status():
-    def __init__(self):
-      self.message = 'initializing'
-    
-    @property
-    def message(self):
-      """The status message as a string."""
-      return self.message
-    
-    @message.setter
-    def message(self,value):
-      self.message = value
-  
-  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None):
+  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None,
+               status_filename = None):
     #fix the resetting of all variables, variables are shared across instances
     self.svc = svm.SVC(kernel="linear")
     self.__X = None
@@ -62,9 +62,15 @@ class Classifier(Daemon):
     else:
       self.log = Logger(logfile_path)
     #if not hasattr(self,'status'):
-    if Classifier.status is None:
-      log.print_log("setting status to initializing")
-      Classifier.status = 'initializing'
+    self.status_filename = status_filename
+    if self.status_filename and os.path.exists(self.status_filename):
+      #if the file exists, try to load it from there
+      f = open(self.status_filename,'rb')
+      self.status = pickle.load(f)
+      f.close()
+    else:
+      #if not, then assume we are starting over
+      self.status = Status()
     #call the parent's __init__ to initialize the daemon variables
     #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
@@ -74,7 +80,24 @@ class Classifier(Daemon):
     if self.get_pid() is None:
       return "classifyd is not running"
     else:
-      return "classifyd is running (status: %s)" % str(Classifier.status)
+      return "classifyd is running (status: %s)" % str(self.status.message)
+  
+  def update_status(self,message=None):
+    if message:
+      self.log.print_log_verbose("updating status message to '%s'" % message)
+      self.status.message = message
+      self.log.print_log_verbose("status message set to '%s'" % message)
+    
+    #if something was updated, save it
+    if self.status_filename and (message):
+      try:
+        output = open(self.status_filename,'wb')
+        pickle.dump(self.status,output)
+        self.log.print_log_verbose("status saved to file '%s'" % self.status_filename)
+        output.close()
+      except Exception,e:
+        self.log.print_error("Error saving status to %s: %s %s" % (str(self.status_filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
   
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
@@ -145,7 +168,7 @@ class Classifier(Daemon):
     if filename and os.path.exists(filename):
       try:
         self.svc = joblib.load(filename)
-        Classifier.status = 'ready'
+        self.update_status("ready")
         self.log.print_log_verbose("load_from_file(): SVM loaded from %s" % filename)
       except Exception,e:
         self.log.print_error("SVM could not be loaded from file (%s), error was %s" % (str(filename),sys.exc_info()[0]))
@@ -159,7 +182,7 @@ class Classifier(Daemon):
     """Train the SVM with the current __X matrix and __y vector.
     
     """
-    Classifier.status = 'training'
+    self.update_status('training')
     #train with the current __X and __y
     self.svc.fit(self.__X,self.__y)
     self.log.print_log("filename: %s" % self.svm_filename)
@@ -172,7 +195,7 @@ class Classifier(Daemon):
         self.log.print_error("Error saving SVM to %s: %s %s" % (str(self.svm_filename),sys.exc_info()[0],e))
         self.log.print_error("Traceback: %s" % traceback.format_exc())
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
-    Classifier.status = 'ready'
+    self.update_status('ready')
   
   def classify(self,filename):
     """Classify the given file using the SVM.
@@ -240,12 +263,12 @@ class Classifier(Daemon):
     """Override for inherited run method of the Daemon class.
     
     """
-    self.log.print_log_verbose("run() called. classifier status is %s." % str(Classifier.status))
+    self.log.print_log_verbose("run() called. classifier status is %s." % str(self.status.message))
     
     while True:
-      if Classifier.status == 'initializing':
+      if self.status.message == 'initializing':
         self.train()
-      elif Classifier.status == 'ready':
+      elif self.status.message == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
         #channel = self.setup_channel(delete_if_empty=True)
         
@@ -311,6 +334,8 @@ class Classifier(Daemon):
     
     """
     self.log.print_log("classifier daemon is shutting down (pid %s)" % str(os.getpid()))
+    if self.status_filename and os.path.exists(self.status_filename):
+      os.remove(self.status_filename)
     Daemon.stop(self)
 
 class Logger():
@@ -517,8 +542,9 @@ def main():
       log.print_error_and_exit("expected classifier argument in {start|stop|restart|status}")
     #at this point, we have a valid daemon command
     svm_filename = config.get("CLASSIFIER","svm_filename") if config.has_option("CLASSIFIER","svm_filename") else None
+    status_filename = config.get("CLASSIFIER","status_filename") if config.has_option("CLASSIFIER","status_filename") else None
     
-    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename)
+    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename,status_filename=status_filename)
     if args.classifier[0] in ('start','restart'):
       if args.classifier[0] == 'restart':
         classifier.stop()
