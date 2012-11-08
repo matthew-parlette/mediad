@@ -240,9 +240,10 @@ class Classifier(Daemon):
     
     if filename and os.path.exists(filename):
       try:
+        self.log.print_log("loading SVM from %s..." % filename)
         self.svc = joblib.load(filename)
         self.update_status("ready")
-        self.log.print_log("Classifier SVM loaded from %s" % filename)
+        self.log.print_log("...done")
         
         #X and y should be available for loading as well
         self.__X = self.load_pickle(self.X_filename)
@@ -266,6 +267,7 @@ class Classifier(Daemon):
     """Train the SVM with the current __X matrix and __y vector.
     
     """
+    self.log.print_log("training SVM...")
     self.update_status('training')
     #Since we are re-training, we delete the pickled X and y if they exist
     if self.X_filename and os.path.exists(self.X_filename):
@@ -275,7 +277,7 @@ class Classifier(Daemon):
     
     #train with the current __X and __y
     self.svc.fit(self.__X,self.__y)
-    self.log.print_log("filename: %s" % self.svm_filename)
+    self.log.print_log("...done")
     
     #Save the SVM to file
     if self.svm_filename:
@@ -297,9 +299,9 @@ class Classifier(Daemon):
       
       #Save the X and y variables
       if self.save_pickle(self.__X,self.X_filename):
-        self.log.print_log("X Matrix (size %s) saved to %s" % (shape(self.__X),self.X_filename))
+        self.log.print_log("X matrix (size %s) saved to %s" % (shape(self.__X),self.X_filename))
         if self.save_pickle(self.__y,self.y_filename):
-          self.log.print_log("y Vector (size %s) saved to %s" % (shape(self.__y),self.y_filename))
+          self.log.print_log("y vector (size %s) saved to %s" % (shape(self.__y),self.y_filename))
         else:
           self.log.print_log_error("Error saving y vector pickle")
       else:
@@ -419,7 +421,7 @@ class Classifier(Daemon):
         if channel:
           self.log.print_log_verbose("channel appears available")
           def on_request(ch, method, properties, body):
-            self.log.print_log_verbose("received message (delivery tag %s): %s" % (method.delivery_tag,body))
+            self.log.print_log("received message (delivery tag %s): %s" % (method.delivery_tag,body))
             result = self.classify(body)
             self.log.print_log_verbose("classified as %s" % str(result))
             ch.basic_publish(exchange='',
