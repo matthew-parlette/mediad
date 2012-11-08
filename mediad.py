@@ -17,7 +17,7 @@ import traceback
 import cPickle as pickle
 
 #Global Arguments
-version = '0.1'
+version = '0.5'
 args = None
 logfile_path = None
 config = None
