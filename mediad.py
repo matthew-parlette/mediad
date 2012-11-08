@@ -250,7 +250,7 @@ class Classifier(Daemon):
         self.__y = self.load_pickle(self.y_filename)
         
         #Set the status statistic for training examples
-        if self.__X and len(self.__X) > 0:
+        if self.__X is not None and len(self.__X) > 0:
           self.update_status(stat_key='training examples',stat_value=int(len(self.__X)))
         else:
           self.log.print_error("self.__X was empty, but I expected it to have values loaded from a pickle save file. Status statistics will not work for the running daemon")
