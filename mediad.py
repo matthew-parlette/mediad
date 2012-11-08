@@ -7,16 +7,17 @@ import os
 import time
 import kaa.metadata
 import pylab as pl
-from numpy import array,vstack,hstack,mgrid,c_
+from numpy import array,vstack,hstack,mgrid,c_,shape
 from sklearn import svm
 from sklearn.externals import joblib
 from daemon import Daemon
 import pika
 import uuid
 import traceback
+import cPickle as pickle
 
 #Global Arguments
-version = '0.1'
+version = '0.5'
 args = None
 logfile_path = None
 config = None
@@ -32,35 +33,109 @@ class Video:
   tv=1
   movie=0
 
-class Classifier(Daemon):
-  status = None
+class Status():
+  def __init__(self):
+    self.message = 'initializing'
+    self.statistics = {}
   
-  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None):
-    #fix the resetting of all variables, variables are shared across instances
+  @property
+  def message(self):
+    """The status message as a string."""
+    return self.message
+  
+  @message.setter
+  def message(self,value):
+    self.message = value
+  
+  def add_stat(self,key,amount=1):
+    """Add a number to a particular statistic category.
+    By default, if you provide the category (for example 'files') without an amount parameter, then 1 will be added to the 'files' statistic
+    
+    You can also provide an amount to add to the statistic, including a negative number.
+    This should only be used for integer statistics
+    """
+    if key not in self.statistics:
+      self.statistics[key] = amount
+    else:
+      self.statistics[key] += amount
+
+class Classifier(Daemon):
+  
+  def __init__(self,pidfile,logfile_path = None,amqp_host = 'localhost',svm_save_filename = None,
+               status_filename = None, X_filename = None, y_filename = None):
+    if args:
+      self.log = Logger(logfile_path,args.verbose)
+    else:
+      self.log = Logger(logfile_path)
+    
+    #For progress messages
+    self.files_processed = 0
+    
+    #Make sure pickle supports compress
+    pickle.HIGHEST_PROTOCOL
+    
     self.svc = svm.SVC(kernel="linear")
+    self.X_filename = os.path.abspath(X_filename) if X_filename else None
+    self.y_filename = os.path.abspath(y_filename) if y_filename else None
     self.__X = None
     self.__y = None
     self.amqp_host = amqp_host
     self.amqp_queue = 'classifyd'
     self.svm_filename = os.path.abspath(svm_save_filename) if svm_save_filename else None
-    if args:
-      self.log = Logger(logfile_path,args.verbose)
+    
+    self.status_filename = status_filename
+    if self.status_filename and os.path.exists(self.status_filename):
+      #if the file exists, try to load it from there
+      f = open(self.status_filename,'rb')
+      self.status = pickle.load(f)
+      f.close()
     else:
-      self.log = Logger(logfile_path)
-    #if not hasattr(self,'status'):
-    if Classifier.status is None:
-      log.print_log("setting status to initializing")
-      Classifier.status = 'initializing'
+      #if not, then assume we are starting over
+      self.status = Status()
     #call the parent's __init__ to initialize the daemon variables
-    #super(Daemon,self).__init__(pidfile)
     Daemon.__init__(self,pidfile)
-    #self.channel = self.setup_channel(delete_if_empty=True)
   
   def __repr__(self):
     if self.get_pid() is None:
       return "classifyd is not running"
     else:
-      return "classifyd is running (status: %s)" % str(Classifier.status)
+      return "classifyd is running (status: %s)" % str(self.status.message)
+  
+  def get_statistics(self):
+    if self.get_pid():
+      return str(self.status.statistics)
+    return None
+  
+  def update_status(self,message=None,stat_key=None,stat_value=None):
+    if message:
+      self.log.print_log_verbose("updating status message to '%s'" % message)
+      self.status.message = message
+      self.log.print_log_verbose("status message set to '%s'" % message)
+    
+    if stat_key:
+      self.status.add_stat(stat_key,amount=int(stat_value if stat_value else 1))
+    
+    #if something was updated, save it
+    if self.status_filename and (message or stat_key):
+      try:
+        output = open(self.status_filename,'wb')
+        pickle.dump(self.status,output)
+        self.log.print_log_verbose("status saved to file '%s'" % self.status_filename)
+        output.close()
+      except Exception,e:
+        self.log.print_error("Error saving status to %s: %s %s" % (str(self.status_filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
+  
+  def update_progress(self,files_processed=1):
+    """Update the user of the progress of the system so far, generally while gathering training data.
+    This will update the self.files_processed variable by adding on the files_processed variable.
+    At a cutoff, it will update the log of its progress.
+    
+    """
+    self.files_processed += files_processed
+    #Update every 500 files
+    if self.files_processed % 500 == 0:
+      self.log.print_log("Progress update, %s files processed for training data" % str(self.files_processed))
   
   def get_video_features(self,filename):
     """Gather the features of the given file and return a row to be used in the SVM.
@@ -111,11 +186,13 @@ class Classifier(Daemon):
             self.log.print_log_verbose("adding row: "+str(row))
             X_rows.append(row)
             y_rows.append(classification)
+            self.update_status(stat_key='training examples')
+            self.update_progress(files_processed=1)
     
     #now add the gathered data to the array
     if len(X_rows) > 0:
-      self.log.print_log_verbose("X_rows: "+str(X_rows))
-      self.log.print_log_verbose("y_rows: "+str(y_rows))
+      self.log.print_log_verbose("Adding X_rows: "+str(X_rows))
+      self.log.print_log_verbose("Adding y_rows: "+str(y_rows))
       if self.__X is None:
         self.__X = array(X_rows)
         self.__y = array(y_rows)
@@ -123,49 +200,121 @@ class Classifier(Daemon):
         self.__X = vstack((self.__X,X_rows))
         self.__y = hstack((self.__y,y_rows))
   
-  def load_from_file(self,filename = None):
+  def load_pickle(self,filename = None):
+    """Load the object from the file and return it.
+    
+    """
+    if filename and os.path.exists(filename):
+      try:
+        f = open(filename,'rb')
+        result = pickle.load(f)
+        f.close()
+        self.log.print_log_verbose("Loaded object from file %s" % filename)
+        self.log.print_log_verbose("Object data: %s" % str(result))
+        return result
+      except Exception,e:
+        self.log.print_error("Pickle count not be loaded from file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
+        return None
+    return None
+  
+  def save_pickle(self,obj,filename = None):
+    """Save the object to a file."""
+    if filename:
+      try:
+        output = open(filename,'wb')
+        pickle.dump(obj,output)
+        output.close()
+        self.log.print_log_verbose("save_pickle(): Saved object to file %s" % filename)
+        return True
+      except Exception,e:
+        self.log.print_error("Object could not be saved to file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
+        return False
+    return False
+  
+  def load_svm_from_file(self,filename = None):
     """Load the saved SVM from a file. If the file does not exist or could not be loaded, then return false.
     
     """
     
     if filename and os.path.exists(filename):
       try:
+        self.log.print_log("loading SVM from %s..." % filename)
         self.svc = joblib.load(filename)
-        Classifier.status = 'ready'
-        self.log.print_log_verbose("load_from_file(): SVM loaded from %s" % filename)
+        self.update_status("ready")
+        self.log.print_log("...done")
+        
+        #X and y should be available for loading as well
+        self.__X = self.load_pickle(self.X_filename)
+        self.__y = self.load_pickle(self.y_filename)
+        
+        #Set the status statistic for training examples
+        if self.__X is not None and len(self.__X) > 0:
+          self.update_status(stat_key='training examples',stat_value=int(len(self.__X)))
+        else:
+          self.log.print_error("self.__X was empty, but I expected it to have values loaded from a pickle save file. Status statistics will not work for the running daemon")
       except Exception,e:
-        self.log.print_error("SVM could not be loaded from file (%s), error was %s" % (str(filename),sys.exc_info()[0]))
+        self.log.print_error("SVM could not be loaded from file (%s), error was %s %s" % (str(filename),sys.exc_info()[0],e))
+        self.log.print_error("Traceback: %s" % traceback.format_exc())
         return False
       return True
     else:
-      self.log.print_log_verbose("load_from_file() called with invalid filename (filename: %s)" % str(filename))
+      self.log.print_log_verbose("load_svm_from_file() called with invalid filename (filename: %s)" % str(filename))
       return False
 
   def train(self):
     """Train the SVM with the current __X matrix and __y vector.
     
     """
-    Classifier.status = 'training'
+    self.log.print_log("training SVM...")
+    self.update_status('training')
+    #Since we are re-training, we delete the pickled X and y if they exist
+    if self.X_filename and os.path.exists(self.X_filename):
+      os.remove(self.X_filename)
+    if self.y_filename and os.path.exists(self.y_filename):
+      os.remove(self.y_filename)
+    
     #train with the current __X and __y
     self.svc.fit(self.__X,self.__y)
-    self.log.print_log("filename: %s" % self.svm_filename)
+    self.log.print_log("...done")
+    
+    #Save the SVM to file
     if self.svm_filename:
       self.log.print_log_verbose("saving SVM to %s" % str(self.svm_filename))
       try:
         joblib.dump(self.svc, self.svm_filename, compress=9)
         self.log.print_log_verbose("SVM saved as %s" % str(self.svm_filename))
+      except TypeError:
+        #if the compress option is not supported, then we try without
+        try:
+          joblib.dump(self.svc, self.svm_filename)
+          self.log.print_log_verbose("SVM saved as %s (without compression)" % str(self.svm_filename))
+        except Exception,e:
+          self.log.print_error("Error saving SVM to %s: %s %s" % (str(self.svm_filename),sys.exc_info()[0],e))
       except Exception,e:
         self.log.print_error("Error saving SVM to %s: %s %s" % (str(self.svm_filename),sys.exc_info()[0],e))
         self.log.print_error("Traceback: %s" % traceback.format_exc())
+      self.log.print_log_verbose("pickling %s %s" % (str(self.__X),self.X_filename))
+      
+      #Save the X and y variables
+      if self.save_pickle(self.__X,self.X_filename):
+        self.log.print_log("X matrix (size %s) saved to %s" % (shape(self.__X),self.X_filename))
+        if self.save_pickle(self.__y,self.y_filename):
+          self.log.print_log("y vector (size %s) saved to %s" % (shape(self.__y),self.y_filename))
+        else:
+          self.log.print_log_error("Error saving y vector pickle")
+      else:
+        self.log.print_log_error("Error saving X Matrix pickle")
+        
     self.log.print_log_verbose("returning from train(): classifier is trained and ready")
-    Classifier.status = 'ready'
+    self.update_status('ready')
   
   def classify(self,filename):
     """Classify the given file using the SVM.
     Return a classification from the Video class.
     
     """
-    self.log.print_log_verbose("classify(), filename: %s" % str(filename))
     features = self.get_video_features(filename)
     if features is not None:
       self.log.print_log_verbose("classifying "+str(filename))
@@ -226,12 +375,12 @@ class Classifier(Daemon):
     """Override for inherited run method of the Daemon class.
     
     """
-    self.log.print_log_verbose("run() called. classifier status is %s." % str(Classifier.status))
+    self.log.print_log_verbose("run() called. classifier status is %s." % str(self.status.message))
     
     while True:
-      if Classifier.status == 'initializing':
+      if self.status.message == 'initializing':
         self.train()
-      elif Classifier.status == 'ready':
+      elif self.status.message == 'ready':
         self.log.print_log("classifier daemon is running (pid %s)" % str(os.getpid()))
         #channel = self.setup_channel(delete_if_empty=True)
         
@@ -252,12 +401,12 @@ class Classifier(Daemon):
           
           #create channel
           channel = connection.channel()
-          self.log.print_log("channel initialized")
+          self.log.print_log_verbose("channel initialized")
           
           #declare the queue
-          self.log.print_log("delcaring queue")
+          self.log.print_log_verbose("delcaring queue")
           channel.queue_declare(queue=self.amqp_queue, durable=True, exclusive=False, auto_delete=False)
-          self.log.print_log("queue declared")
+          self.log.print_log_verbose("queue declared")
           
           #qos allows for better handling of multiple clients
           channel.basic_qos(prefetch_count=1)
@@ -272,7 +421,7 @@ class Classifier(Daemon):
         if channel:
           self.log.print_log_verbose("channel appears available")
           def on_request(ch, method, properties, body):
-            self.log.print_log_verbose("received message (delivery tag %s): %s" % (method.delivery_tag,body))
+            self.log.print_log("received message (delivery tag %s): %s" % (method.delivery_tag,body))
             result = self.classify(body)
             self.log.print_log_verbose("classified as %s" % str(result))
             ch.basic_publish(exchange='',
@@ -284,7 +433,7 @@ class Classifier(Daemon):
             self.log.print_log_verbose("acknowledged %s" % method.delivery_tag)
           
           #everything is ready to go, now start the consuming of the queue
-          self.log.print_log("queue %s declared, listening for messages" % self.amqp_queue)
+          self.log.print_log("queue %s declared, listening for messages..." % self.amqp_queue)
           channel.basic_consume(on_request,queue=self.amqp_queue)
           #the next command blocks, so it will keep listening and this method will no longer loop
           channel.start_consuming()
@@ -297,6 +446,8 @@ class Classifier(Daemon):
     
     """
     self.log.print_log("classifier daemon is shutting down (pid %s)" % str(os.getpid()))
+    if self.status_filename and os.path.exists(self.status_filename):
+      os.remove(self.status_filename)
     Daemon.stop(self)
 
 class Logger():
@@ -382,8 +533,8 @@ def load_media_data(classifier):
   Returns the results in a boolean.
   
   """
-  if config.has_option("CLASSIFIER","svm_filename") and classifier.load_from_file(config.get("CLASSIFIER","svm_filename")):
-    log.print_log("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
+  if config.has_option("CLASSIFIER","svm_filename") and classifier.load_svm_from_file(config.get("CLASSIFIER","svm_filename")):
+    log.print_log_verbose("SVM loaded from file (%s)" % config.get("CLASSIFIER","svm_filename"))
     return True
   else:
     log.print_log_verbose("svm_filename not provided or load failed. Now loading from scratch")
@@ -503,8 +654,12 @@ def main():
       log.print_error_and_exit("expected classifier argument in {start|stop|restart|status}")
     #at this point, we have a valid daemon command
     svm_filename = config.get("CLASSIFIER","svm_filename") if config.has_option("CLASSIFIER","svm_filename") else None
+    status_filename = config.get("CLASSIFIER","status_filename") if config.has_option("CLASSIFIER","status_filename") else None
+    X_filename = config.get("CLASSIFIER","X_filename") if config.has_option("CLASSIFIER","X_filename") else None
+    y_filename = config.get("CLASSIFIER","y_filename") if config.has_option("CLASSIFIER","y_filename") else None
     
-    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename)
+    classifier = Classifier(config.get("CLASSIFIER","pidfile"),logfile_path,svm_save_filename=svm_filename,
+                                       status_filename=status_filename,X_filename=X_filename,y_filename=y_filename)
     if args.classifier[0] in ('start','restart'):
       if args.classifier[0] == 'restart':
         classifier.stop()
@@ -521,6 +676,7 @@ def main():
       classifier.stop()
     elif args.classifier[0] == 'status':
       log.print_log_and_stdout(str(classifier))
+      log.print_log_and_stdout("statistics: %s" % str(classifier.get_statistics()))
 
   if args.plot:
     log.print_log("plotting training data...")
