@@ -521,13 +521,13 @@ class MediaFile():
     self.exception = False
   
   def __repr__(self):
-    s = "Original Filename: %s\n" % self.original_abspath()
-    s += "Classification: %s\n" % Video.to_string(self.classification)
+    s = "Original Filename: %s\n" % str(self.original_abspath())
+    s += "Classification: %s\n" % str(Video.to_string(self.classification))
     s += "DB Search Term: %s\n" % str(self.db_search_term)
     s += "DB Search Results: %s\n" % str(self.db_search_results)
     s += "DB Object: %s\n" % str(self.db_object)
-    s += "New Filename: %s\n" % self.new_abspath()
-    s += "Exception: %s" % self.exception
+    s += "New Filename: %s\n" % str(self.new_abspath())
+    s += "Exception: %s" % str(self.exception)
     return s
   
   def original_abspath(self):
