@@ -32,6 +32,14 @@ class Video:
   """
   tv=1
   movie=0
+  
+  @staticmethod
+  def to_string(classification):
+    if classification == Video.tv:
+      return "tv"
+    if classification == Video.movie:
+      return "movie"
+    return str(None)
 
 class Status():
   def __init__(self):
@@ -500,6 +508,53 @@ class Logger():
     if self.verbose:
       self.print_log(message)
 
+class MediaFile():
+  def __init__(self,original_filename,classification = None,db_search_term = None):
+    self.original_path = os.path.dirname(original_filename)
+    self.original_filename = os.path.basename(original_filename)
+    self.classification = classification
+    self.db_search_term = db_search_term
+    self.db_search_results = None
+    self.db_object = None
+    self.new_filename = None
+    self.new_path = None
+    self.exception = False
+  
+  def __repr__(self):
+    s = "Original Filename: %s\n" % self.original_abspath()
+    s += "Classification: %s\n" % Video.to_string(self.classification)
+    s += "DB Search Term: %s\n" % str(self.db_search_term)
+    s += "DB Search Results: %s\n" % str(self.db_search_results)
+    s += "DB Object: %s\n" % str(self.db_object)
+    s += "New Filename: %s\n" % self.new_abspath()
+    s += "Exception: %s" % self.exception
+    return s
+  
+  def original_abspath(self):
+    """The absolute path of the original file."""
+    return os.path.join(self.original_path,self.original_filename) if self.original_path and self.original_filename else None
+  
+  def new_abspath(self):
+    """The absolute path of the new (renamed) file."""
+    return os.path.join(self.new_path,self.new_filename) if self.new_path and self.new_filename else None
+  
+  def is_exception(self):
+    return self.exception
+  
+  def process(self,move_file = True):
+    """Rename and move the file.
+    
+    move_file: Move the file if everything looks good (search returned one result)
+    
+    Return True if everything went as expected and the file was moved.
+    Return False if there was any problem with the process. This will also set the exception flag.
+    
+    """
+    
+    if os.path.exists(self.original_abspath()):
+      pass
+    return False
+
 def verify_config(config):
   """Verify that the essential parts of the configuration are provided in the ConfigParser object.
   Return False if an error was found.
@@ -686,16 +741,18 @@ def main():
     test_classifier(classifier)
   else:
     if args.filename:
-      log.print_log("classifying file...")
+      f = MediaFile(args.filename[0])
+      print f
+      #log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
         log.print_log_verbose("file found: "+str(args.filename[0]))
-        result = classify(args.filename[0])
+        """result = classify(args.filename[0])
         if result == Video.tv:
           log.print_log_and_stdout("tv")
         elif result == Video.movie:
           log.print_log_and_stdout("movie")
         else:
-          log.print_log_and_stdout("error")
+          log.print_log_and_stdout("error")"""
       else:
         log.print_error("file not found")
       log.print_log("...done")
