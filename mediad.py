@@ -583,6 +583,40 @@ class MediaFile():
     connection.close()
     return self.classification
   
+  def search(self):
+    """Search the media database (either tv or movie) for the original filename."""
+    if self.db_search_term is None:
+      #set the search term equal to the original filename
+      self.db_search_term = self.original_filename
+    
+    self.db_search_results = {}
+    
+    if self.classification is Video.tv:
+      tvdb = thetvdb.TVShow()
+      
+      """Next we will try to search for the show. We break on the period, as that is most
+      common in the files to separate the show title from the flags and so on.
+      When we run out of the search term to trim, then we give up."""
+      
+      while self.db_search_results == {} and self.exception is False:
+        log.print_log_verbose("searching thetvdb for '%s'" % self.db_search_term)
+        self.db_search_results = tvdb.search(self.db_search_term)
+        if self.db_search_results == {}:
+          if '.' in self.db_search_term:
+            try:
+              self.db_search_term = self.db_search_term[:self.db_search_term.rindex('.')]
+              log.print_log_verbose("no results for previous search term, shortening to %s" % self.db_search_term)
+            except ValueError:
+              self.exception = True #just move on if the period couldn't be found
+          else:
+            log.print_log_error("all search terms failed, giving up on this file")
+            self.exception = True #give up
+    
+    if self.classification is Video.movie:
+      pass
+    
+    return self.db_search_results
+  
   def process(self,move_file = True):
     """Rename and move the file.
     
@@ -597,7 +631,8 @@ class MediaFile():
       if self.classification is None:
         self.classify()
       if self.classification is not None:
-        pass
+        if self.search():
+          return True
     return False
 
 def verify_config(config):
@@ -787,7 +822,7 @@ def main():
   else:
     if args.filename:
       f = MediaFile(args.filename[0])
-      print f.classify()
+      print f.process()
       print f
       #log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
