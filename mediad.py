@@ -557,12 +557,11 @@ class MediaFile():
     self.corr_id = str(uuid.uuid4())
     
     #setup the response callback
-    self.response = None
+    self.classification = None
     def on_response(ch, method, props, body):
       log.print_log_verbose("received response %s (%s)" % (str(body),str(Video.to_string(body))))
       if self.corr_id == props.correlation_id:
         self.classification = int(body)
-        self.response = int(body)
     
     #setup the response queue
     response_queue = channel.queue_declare(exclusive=True).method.queue
@@ -578,7 +577,7 @@ class MediaFile():
     log.print_log_verbose("sent %s" % str(self.original_abspath()))
     
     #wait for the response
-    while self.response is None:
+    while self.classification is None:
       connection.process_data_events()
     
     connection.close()
