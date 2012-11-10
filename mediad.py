@@ -594,7 +594,10 @@ class MediaFile():
     """
     
     if os.path.exists(self.original_abspath()):
-      pass
+      if self.classification is None:
+        self.classify()
+      if self.classification is not None:
+        pass
     return False
 
 def verify_config(config):
