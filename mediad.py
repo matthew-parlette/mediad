@@ -541,6 +541,49 @@ class MediaFile():
   def is_exception(self):
     return self.exception
   
+  def classify(self):
+    """Classify the original file and save it as the instance classification variable.
+    
+    This will also return the classification as 0 or 1."""
+    
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
+    
+    log.print_log_verbose("declaring queue")
+    channel.queue_declare(queue='classifyd', durable=True)
+    log.print_log_verbose("queue declared")
+    
+    #the correlation id will make sure we are reading the response to our request
+    self.corr_id = str(uuid.uuid4())
+    
+    #setup the response callback
+    self.response = None
+    def on_response(ch, method, props, body):
+      log.print_log_verbose("received response %s (%s)" % (str(body),str(Video.to_string(body))))
+      if self.corr_id == props.correlation_id:
+        self.classification = int(body)
+        self.response = int(body)
+    
+    #setup the response queue
+    response_queue = channel.queue_declare(exclusive=True).method.queue
+    channel.basic_consume(on_response, no_ack=True, queue=response_queue)
+    
+    #send the request
+    channel.basic_publish(exchange='',routing_key='classifyd',
+                          properties=pika.BasicProperties(
+                                                          reply_to = response_queue,
+                                                          correlation_id = self.corr_id,
+                                                          delivery_mode = 2),
+                          body=self.original_abspath())
+    log.print_log_verbose("sent %s" % str(self.original_abspath()))
+    
+    #wait for the response
+    while self.response is None:
+      connection.process_data_events()
+    
+    connection.close()
+    return self.classification
+  
   def process(self,move_file = True):
     """Rename and move the file.
     
@@ -742,6 +785,7 @@ def main():
   else:
     if args.filename:
       f = MediaFile(args.filename[0])
+      print f.classify()
       print f
       #log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
