@@ -15,6 +15,8 @@ import pika
 import uuid
 import traceback
 import cPickle as pickle
+import StringIO
+import re
 
 #Global Arguments
 version = '0.5'
@@ -24,6 +26,12 @@ config = None
 log = None
 response = None
 
+config_default="""
+[TV]
+season_regex=(?ix)(?:s|season|^)\s*(\d{2})
+episode_regex=(?ix)(?:e|x|episode|^)\s*(\d{2})
+"""
+
 #tv = thetvdb.TVShow('94571')
 
 class Video:
@@ -32,6 +40,14 @@ class Video:
   """
   tv=1
   movie=0
+  
+  @staticmethod
+  def to_string(classification):
+    if classification == Video.tv:
+      return "tv"
+    if classification == Video.movie:
+      return "movie"
+    return str(None)
 
 class Status():
   def __init__(self):
@@ -500,6 +516,236 @@ class Logger():
     if self.verbose:
       self.print_log(message)
 
+class MediaFile():
+  def __init__(self,original_filename,classification = None,db_search_term = None):
+    self.original_path = os.path.dirname(original_filename)
+    self.original_filename = os.path.basename(original_filename)
+    self.classification = classification
+    self.db_search_term = db_search_term
+    self.db_search_results = None
+    self.db_object = None
+    self.new_filename = None
+    self.new_path = None
+    self.exception = False
+  
+  def __repr__(self):
+    s = "Original Filename: %s\n" % str(self.original_abspath())
+    s += "Classification: %s\n" % str(Video.to_string(self.classification))
+    s += "DB Search Term: %s\n" % str(self.db_search_term)
+    s += "DB Search Results: %s\n" % str(self.db_search_results)
+    s += "DB Object: %s\n" % str(self.db_object)
+    s += "New Filename: %s\n" % str(self.new_abspath())
+    s += "Exception: %s" % str(self.exception)
+    return s
+  
+  def original_abspath(self):
+    """The absolute path of the original file."""
+    return os.path.join(self.original_path,self.original_filename) if self.original_path and self.original_filename else None
+  
+  def new_abspath(self):
+    """The absolute path of the new (renamed) file."""
+    return os.path.join(self.new_path,self.new_filename) if self.new_path and self.new_filename else None
+  
+  def is_exception(self):
+    return self.exception
+  
+  def classify(self):
+    """Classify the original file and save it as the instance classification variable.
+    
+    This will also return the classification as 0 or 1."""
+    
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
+    
+    log.print_log_verbose("declaring queue")
+    channel.queue_declare(queue='classifyd', durable=True)
+    log.print_log_verbose("queue declared")
+    
+    #the correlation id will make sure we are reading the response to our request
+    self.corr_id = str(uuid.uuid4())
+    
+    #setup the response callback
+    self.classification = None
+    def on_response(ch, method, props, body):
+      log.print_log_verbose("received response %s (%s)" % (str(body),str(Video.to_string(body))))
+      if self.corr_id == props.correlation_id:
+        self.classification = int(body)
+    
+    #setup the response queue
+    response_queue = channel.queue_declare(exclusive=True).method.queue
+    channel.basic_consume(on_response, no_ack=True, queue=response_queue)
+    
+    #send the request
+    channel.basic_publish(exchange='',routing_key='classifyd',
+                          properties=pika.BasicProperties(
+                                                          reply_to = response_queue,
+                                                          correlation_id = self.corr_id,
+                                                          delivery_mode = 2),
+                          body=self.original_abspath())
+    log.print_log_verbose("sent %s" % str(self.original_abspath()))
+    
+    #wait for the response
+    while self.classification is None:
+      connection.process_data_events()
+    
+    connection.close()
+    return self.classification
+  
+  def search(self):
+    """Search the media database (either tv or movie) for the original filename."""
+    if self.db_search_term is None:
+      #set the search term equal to the original filename
+      self.db_search_term = self.original_filename
+    
+    self.db_search_results = {}
+    
+    if self.classification is Video.tv:
+      tvdb = thetvdb.TVShow()
+      
+      """Next we will try to search for the show. We break on the period, as that is most
+      common in the files to separate the show title from the flags and so on.
+      When we run out of the search term to trim, then we give up."""
+      
+      while self.db_search_results == {} and self.exception is False:
+        log.print_log_verbose("searching thetvdb for '%s'" % self.db_search_term)
+        self.db_search_results = tvdb.search(self.db_search_term)
+        if self.db_search_results == {}:
+          if '.' in self.db_search_term:
+            try:
+              self.db_search_term = self.db_search_term[:self.db_search_term.rindex('.')]
+              log.print_log_verbose("no results for previous search term, shortening to %s" % self.db_search_term)
+            except ValueError:
+              self.exception = True #just move on if the period couldn't be found
+          else:
+            log.print_error("All search terms failed, giving up on this file")
+            self.exception = True #give up
+    
+    if self.classification is Video.movie:
+      pass
+    
+    return self.db_search_results
+  
+  def select_object_from_search_results(self,db_id = None):
+    """Using this instance's search results, pick the object to use when renaming this media file.
+    
+    For example, select a tv show from the search results to use when renaming an episode.
+    
+    db_id: The id of the show or movie in its database
+    """
+    
+    if db_id:
+      """If a database id was passed in, then set the db_object based on that."""
+      if db_id in self.db_search_results:
+        if self.classification == Video.tv:
+          self.db_object = thetvdb.TVShow(db_id)
+          return True
+        if self.classification == Video.movie:
+          pass
+      else:
+        log.print_error("The id passed to MediaFile.select_object_from_search_results() was not in the search results")
+    else:
+      """If the database id is not passed in, then we try to select one from the search results."""
+      if len(self.db_search_results) == 1:
+        self.db_object = thetvdb.TVShow(self.db_search_results.keys()[0])
+        return True
+      else:
+        log.print_error("There is more than one entry in the search results, I cannot decide which one to use. Marking this file as an exception")
+    
+    return False
+  
+  def set_new_path(self,base_path,season_number = None):
+    """Set the new_path instance variable from the db_object."""
+    if self.db_object:
+      if self.classification == Video.tv:
+        self.new_path = os.path.join(base_path,self.db_object.get_samba_show_name(),"Season %s" % str(int(season_number)))
+        log.print_log_verbose("set new_path to %s" % self.new_path)
+        return True
+      if self.classification == Video.movie:
+        pass
+    return False
+  
+  def set_new_filename(self):
+    """Set the new_filename instance variables with the information in the db_object.
+    
+    This also calls the set_new_path method to populate self.new_path."""
+    
+    if self.db_object:
+      if self.classification == Video.tv:
+        """Here we first try to get the season and episode number from the original filename.
+        
+        This was copied by the very helpful answer from unutbu http://stackoverflow.com/a/9129707
+        
+        match = re.search(
+          r'''(?ix)                 # Ignore case (i), and use verbose regex (x)
+          (?:                       # non-grouping pattern
+            e|x|episode|^           # e or x or episode or start of a line
+            )                       # end non-grouping pattern 
+          \s*                       # 0-or-more whitespaces
+          (\d{2})                   # exactly 2 digits
+          ''', filename)
+        """
+        season_regex = config.get("TV","season_regex")
+        episode_regex = config.get("TV","episode_regex")
+        
+        log.print_log_verbose("season_regex for tv show: %s" % str(season_regex))
+        season_match = re.search(season_regex, self.original_filename)
+        if season_match:
+          log.print_log_verbose("season_regex matched %r" % season_match.groups())
+          season = season_match.groups()[0]
+          
+          self.set_new_path(config.get("TV","tv_dir"),season_number = int(season))
+        
+          log.print_log_verbose("episode_regex for tv show: %s" % str(episode_regex))
+          episode_match = re.search(episode_regex, self.original_filename)
+          if episode_match:
+            log.print_log_verbose("episode_regex matched %r" % episode_match.groups())
+            episode = episode_match.groups()[0]
+            if self.db_object:
+              self.new_filename = self.db_object.get_samba_filename(season,episode)
+              if self.db_object.error_message:
+                print self.db_object.error_message
+              log.print_log_verbose("new filename set to %s" % self.new_filename)
+              return True
+      if self.classification == Video.movie:
+        return False
+    else:
+      log.print_error("set_new_filename called, but db_object is none")
+    return False
+  
+  def process(self,move_file = True):
+    """Rename and move the file.
+    
+    move_file: Move the file if everything looks good (search returned one result)
+    
+    Return True if everything went as expected and the file was moved.
+    Return False if there was any problem with the process. This will also set the exception flag.
+    
+    """
+    
+    if os.path.exists(self.original_abspath()):
+      if self.classification is None:
+        self.classify()
+        #print "\n========== after classify ==========\n%s" % self
+      if self.classification is not None:
+        if self.search():
+          #print "\n========== after search ==========\n%s" % self
+          if self.select_object_from_search_results():
+            #print "\n========== after select object ==========\n%s" % self
+            if self.set_new_filename():
+              #print "\n========== after set filename ==========\n%s" % self
+              return True
+            else:
+              log.print_error("Set filename failed")
+          else:
+            log.print_error("Couldn't select one object from the search results")
+        else:
+          log.print_error("Search failed")
+      else:
+        log.print_error("Classification failed")
+    else:
+      log.print_error("Original file could not be found")
+    return False
+
 def verify_config(config):
   """Verify that the essential parts of the configuration are provided in the ConfigParser object.
   Return False if an error was found.
@@ -629,8 +875,17 @@ def main():
   args = parser.parse_args()
   
   #Load config file
+  """First we set the defaults for the config. We read the defaults first, then read the
+  actual config file that overwrites any settings are are defined by the user.
+  
+  This method is copied from: http://bytes.com/topic/python/answers/462831-default-section-values-configparser
+  """
+  
+  default_cfg = StringIO.StringIO(config_default)
+  
   global config
   config = ConfigParser.ConfigParser()
+  config.readfp(default_cfg)
   config.read(args.conf)
   
   global logfile_path
@@ -686,16 +941,18 @@ def main():
     test_classifier(classifier)
   else:
     if args.filename:
-      log.print_log("classifying file...")
+      f = MediaFile(args.filename[0])
+      log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
+      #log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
         log.print_log_verbose("file found: "+str(args.filename[0]))
-        result = classify(args.filename[0])
+        """result = classify(args.filename[0])
         if result == Video.tv:
           log.print_log_and_stdout("tv")
         elif result == Video.movie:
           log.print_log_and_stdout("movie")
         else:
-          log.print_log_and_stdout("error")
+          log.print_log_and_stdout("error")"""
       else:
         log.print_error("file not found")
       log.print_log("...done")
