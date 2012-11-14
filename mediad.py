@@ -653,8 +653,21 @@ class MediaFile():
     
     return False
   
+  def set_new_path(self,base_path,season_number = None):
+    """Set the new_path instance variable from the db_object."""
+    if self.db_object:
+      if self.classification == Video.tv:
+        self.new_path = os.path.join(base_path,self.db_object.get_samba_show_name(),"Season %s" % str(int(season_number)))
+        log.print_log_verbose("set new_path to %s" % self.new_path)
+        return True
+      if self.classification == Video.movie:
+        pass
+    return False
+  
   def set_new_filename(self):
-    """Set the new_filename and new_path instance variables with the information in the db_object."""
+    """Set the new_filename instance variables with the information in the db_object.
+    
+    This also calls the set_new_path method to populate self.new_path."""
     
     if self.db_object:
       if self.classification == Video.tv:
@@ -679,6 +692,8 @@ class MediaFile():
         if season_match:
           log.print_log_verbose("season_regex matched %r" % season_match.groups())
           season = season_match.groups()[0]
+          
+          self.set_new_path(config.get("TV","tv_dir"),season_number = int(season))
         
           log.print_log_verbose("episode_regex for tv show: %s" % str(episode_regex))
           episode_match = re.search(episode_regex, self.original_filename)
