@@ -725,15 +725,25 @@ class MediaFile():
     if os.path.exists(self.original_abspath()):
       if self.classification is None:
         self.classify()
-        print "\n========== after classify ==========\n%s" % self
+        #print "\n========== after classify ==========\n%s" % self
       if self.classification is not None:
         if self.search():
-          print "\n========== after search ==========\n%s" % self
+          #print "\n========== after search ==========\n%s" % self
           if self.select_object_from_search_results():
-            print "\n========== after select object ==========\n%s" % self
+            #print "\n========== after select object ==========\n%s" % self
             if self.set_new_filename():
-              print "\n========== after set filename ==========\n%s" % self
+              #print "\n========== after set filename ==========\n%s" % self
               return True
+            else:
+              log.print_error("Set filename failed")
+          else:
+            log.print_error("Couldn't select one object from the search results")
+        else:
+          log.print_error("Search failed")
+      else:
+        log.print_error("Classification failed")
+    else:
+      log.print_error("Original file could not be found")
     return False
 
 def verify_config(config):
