@@ -538,6 +538,16 @@ class MediaFile():
     s += "Exception: %s" % str(self.exception)
     return s
   
+  def __eq__(self, other):
+    if hasattr(other,'original_abspath') and callable(other.original_abspath):
+      return os.path.samefile(self.original_abspath(),other.original_abspath())
+    return False
+  
+  def __ne__(self, other):
+    if hasattr(other,'original_abspath') and callable(other.original_abspath):
+      return not os.path.samefile(self.original_abspath(),other.original_abspath())
+    return True
+  
   def original_abspath(self):
     """The absolute path of the original file."""
     return os.path.join(self.original_path,self.original_filename) if self.original_path and self.original_filename else None
@@ -943,6 +953,7 @@ def main():
     if args.filename:
       f = MediaFile(args.filename[0])
       log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
+
       #log.print_log("classifying file...")
       if os.path.exists(args.filename[0]):
         log.print_log_verbose("file found: "+str(args.filename[0]))
