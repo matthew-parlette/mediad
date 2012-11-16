@@ -867,6 +867,21 @@ def classify(filename):
   connection.close()
   return -1
 
+def add_exception(exceptions,mediafile,save_filename = None):
+  """Add the parameter MediaFile object to the exceptions list and save it to a file."""
+  
+  if mediafile not in exceptions:
+    exceptions.append(mediafile)
+    exceptions.sort(key=lambda mf: mf.original_filename)
+    
+    if save_filename:
+      try:
+        pickle.dump(mediafile,open(save_filename,'wb'))
+      except pickle.PicklingError:
+        log.print_error("Could not pickle the exceptions list to %s" % save_filename)
+      except IOError:
+        log.print_error("File could not be opened for writing: %s" % save_filename)
+
 def main():
   
   #Parse command line arguments
@@ -964,6 +979,21 @@ def main():
   if args.filename:
     f = MediaFile(args.filename[0])
     log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
+    if f.is_exception():
+      add_exception(exceptions,f,save_filename = config.get("GENERAL","exceptions_filename"))
+  
+  if args.exceptions:
+    """For the exceptions client, we display a menu to select the media file to process,
+    then allow the user to change any setting in the media file object before processing it."""
+    cmd = ''
+    while cmd != 'q':
+      print "\n\n"
+      print "Exceptions Menu"
+      print "===============\n"
+      print "(L)ist Exceptions"
+      print "(Q)uit"
+      print "\nExceptions: %s" % str(len(exceptions))
+      cmd = raw_input('> ').lower()
 
 if __name__ == "__main__":
   main()
