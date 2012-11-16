@@ -943,30 +943,26 @@ def main():
       log.print_log_and_stdout(str(classifier))
       log.print_log_and_stdout("statistics: %s" % str(classifier.get_statistics()))
 
+  #Load the exceptions if the file exists
+  exceptions = []
+  if config.has_option("GENERAL","exceptions_filename"):
+    try:
+      exceptions = pickle.load(open(config.get("GENERAL","exceptions_filename"),'rb'))
+    except pickle.UnpicklingError:
+      log.print_error("Error loading exceptions list from %s" % config.get("GENERAL","exceptions_filename"))
+    except IOError:
+      log.print_error("%s not found, using a blank exceptions list" % config.get("GENERAL","exceptions_filename"))
+
   if args.plot:
     log.print_log("plotting training data...")
     
     log.print_log("...done")
   if args.test:
     test_classifier(classifier)
-  else:
-    if args.filename:
-      f = MediaFile(args.filename[0])
-      log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
-
-      #log.print_log("classifying file...")
-      if os.path.exists(args.filename[0]):
-        log.print_log_verbose("file found: "+str(args.filename[0]))
-        """result = classify(args.filename[0])
-        if result == Video.tv:
-          log.print_log_and_stdout("tv")
-        elif result == Video.movie:
-          log.print_log_and_stdout("movie")
-        else:
-          log.print_log_and_stdout("error")"""
-      else:
-        log.print_error("file not found")
-      log.print_log("...done")
+  
+  if args.filename:
+    f = MediaFile(args.filename[0])
+    log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
 
 if __name__ == "__main__":
   main()
