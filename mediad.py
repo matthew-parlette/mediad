@@ -881,6 +881,7 @@ def main():
   parser.add_argument('-f','--filename', help="classify a specific file", nargs=1)
   parser.add_argument('--logfile', help="specify a log file for the output", nargs=1)
   parser.add_argument('-c','--classifier', help="manage the classifier daemon", nargs=1)
+  parser.add_argument('-e','--exceptions', help="handle media file exceptions (ex. files that could not be classified)", action='store_true')
   global args
   args = parser.parse_args()
   
