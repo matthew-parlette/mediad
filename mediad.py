@@ -17,6 +17,7 @@ import traceback
 import cPickle as pickle
 import StringIO
 import re
+import filecmp
 
 #Global Arguments
 version = '0.5'
@@ -548,6 +549,12 @@ class MediaFile():
       return not os.path.samefile(self.original_abspath(),other.original_abspath())
     return True
   
+  def __iter__(self):
+    return iter(self.original_abspath)
+  
+  def __cmp__(self,other):
+    return filecmp.cmp(self.original_abspath(),other.original_abspath())
+  
   def original_abspath(self):
     """The absolute path of the original file."""
     return os.path.join(self.original_path,self.original_filename) if self.original_path and self.original_filename else None
@@ -872,11 +879,11 @@ def add_exception(exceptions,mediafile,save_filename = None):
   
   if mediafile not in exceptions:
     exceptions.append(mediafile)
-    exceptions.sort(key=lambda mf: mf.original_filename)
+    exceptions.sort(key=lambda mf: mf.original_abspath())
     
     if save_filename:
       try:
-        pickle.dump(mediafile,open(save_filename,'wb'))
+        pickle.dump(exceptions,open(save_filename,'wb'))
       except pickle.PicklingError:
         log.print_error("Could not pickle the exceptions list to %s" % save_filename)
       except IOError:
@@ -960,7 +967,7 @@ def main():
       log.print_log_and_stdout("statistics: %s" % str(classifier.get_statistics()))
 
   #Load the exceptions if the file exists
-  exceptions = []
+  exceptions = list()
   if config.has_option("GENERAL","exceptions_filename"):
     try:
       exceptions = pickle.load(open(config.get("GENERAL","exceptions_filename"),'rb'))
@@ -986,6 +993,7 @@ def main():
     """For the exceptions client, we display a menu to select the media file to process,
     then allow the user to change any setting in the media file object before processing it."""
     cmd = ''
+    
     while cmd != 'q':
       print "\n\n"
       print "Exceptions Menu"
