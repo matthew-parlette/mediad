@@ -17,6 +17,7 @@ import traceback
 import cPickle as pickle
 import StringIO
 import re
+import filecmp
 
 #Global Arguments
 version = '0.5'
@@ -538,6 +539,22 @@ class MediaFile():
     s += "Exception: %s" % str(self.exception)
     return s
   
+  def __eq__(self, other):
+    if hasattr(other,'original_abspath') and callable(other.original_abspath):
+      return os.path.samefile(self.original_abspath(),other.original_abspath())
+    return False
+  
+  def __ne__(self, other):
+    if hasattr(other,'original_abspath') and callable(other.original_abspath):
+      return not os.path.samefile(self.original_abspath(),other.original_abspath())
+    return True
+  
+  def __iter__(self):
+    return iter(self.original_abspath)
+  
+  def __cmp__(self,other):
+    return filecmp.cmp(self.original_abspath(),other.original_abspath())
+  
   def original_abspath(self):
     """The absolute path of the original file."""
     return os.path.join(self.original_path,self.original_filename) if self.original_path and self.original_filename else None
@@ -857,6 +874,21 @@ def classify(filename):
   connection.close()
   return -1
 
+def add_exception(exceptions,mediafile,save_filename = None):
+  """Add the parameter MediaFile object to the exceptions list and save it to a file."""
+  
+  if mediafile not in exceptions:
+    exceptions.append(mediafile)
+    exceptions.sort(key=lambda mf: mf.original_abspath())
+    
+    if save_filename:
+      try:
+        pickle.dump(exceptions,open(save_filename,'wb'))
+      except pickle.PicklingError:
+        log.print_error("Could not pickle the exceptions list to %s" % save_filename)
+      except IOError:
+        log.print_error("File could not be opened for writing: %s" % save_filename)
+
 def main():
   
   #Parse command line arguments
@@ -871,6 +903,7 @@ def main():
   parser.add_argument('-f','--filename', help="classify a specific file", nargs=1)
   parser.add_argument('--logfile', help="specify a log file for the output", nargs=1)
   parser.add_argument('-c','--classifier', help="manage the classifier daemon", nargs=1)
+  parser.add_argument('-e','--exceptions', help="handle media file exceptions (ex. files that could not be classified)", action='store_true')
   global args
   args = parser.parse_args()
   
@@ -933,29 +966,42 @@ def main():
       log.print_log_and_stdout(str(classifier))
       log.print_log_and_stdout("statistics: %s" % str(classifier.get_statistics()))
 
+  #Load the exceptions if the file exists
+  exceptions = list()
+  if config.has_option("GENERAL","exceptions_filename"):
+    try:
+      exceptions = pickle.load(open(config.get("GENERAL","exceptions_filename"),'rb'))
+    except pickle.UnpicklingError:
+      log.print_error("Error loading exceptions list from %s" % config.get("GENERAL","exceptions_filename"))
+    except IOError:
+      log.print_error("%s not found, using a blank exceptions list" % config.get("GENERAL","exceptions_filename"))
+
   if args.plot:
     log.print_log("plotting training data...")
     
     log.print_log("...done")
   if args.test:
     test_classifier(classifier)
-  else:
-    if args.filename:
-      f = MediaFile(args.filename[0])
-      log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
-      #log.print_log("classifying file...")
-      if os.path.exists(args.filename[0]):
-        log.print_log_verbose("file found: "+str(args.filename[0]))
-        """result = classify(args.filename[0])
-        if result == Video.tv:
-          log.print_log_and_stdout("tv")
-        elif result == Video.movie:
-          log.print_log_and_stdout("movie")
-        else:
-          log.print_log_and_stdout("error")"""
-      else:
-        log.print_error("file not found")
-      log.print_log("...done")
+  
+  if args.filename:
+    f = MediaFile(args.filename[0])
+    log.print_log_and_stdout("\n\nprocess results: %s\n\n========== final MediaFile instance ==========\n%s" % (str(f.process()),str(f)))
+    if f.is_exception():
+      add_exception(exceptions,f,save_filename = config.get("GENERAL","exceptions_filename"))
+  
+  if args.exceptions:
+    """For the exceptions client, we display a menu to select the media file to process,
+    then allow the user to change any setting in the media file object before processing it."""
+    cmd = ''
+    
+    while cmd != 'q':
+      print "\n\n"
+      print "Exceptions Menu"
+      print "===============\n"
+      print "(L)ist Exceptions"
+      print "(Q)uit"
+      print "\nExceptions: %s" % str(len(exceptions))
+      cmd = raw_input('> ').lower()
 
 if __name__ == "__main__":
   main()
